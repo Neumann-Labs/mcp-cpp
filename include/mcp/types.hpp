@@ -374,9 +374,13 @@ template <> struct adl_serializer<mcp::types::RequestMeta> {
 // JSONRPCRequest serialization
 template <> struct adl_serializer<mcp::types::JSONRPCRequest> {
   static void to_json(json &j, const mcp::types::JSONRPCRequest &request) {
-    j = json{{"jsonrpc", request.jsonrpc},
-             {"id", request.id},
-             {"method", request.method}};
+    j = json::object();
+    j["jsonrpc"] = request.jsonrpc;
+
+    // Handle variant ID properly
+    std::visit([&j](const auto &id) { j["id"] = id; }, request.id);
+
+    j["method"] = request.method;
     if (request.params) {
       j["params"] = *request.params;
     }
@@ -384,7 +388,14 @@ template <> struct adl_serializer<mcp::types::JSONRPCRequest> {
 
   static void from_json(const json &j, mcp::types::JSONRPCRequest &request) {
     j.at("jsonrpc").get_to(request.jsonrpc);
-    j.at("id").get_to(request.id);
+
+    // Handle variant id (string or int)
+    if (j.at("id").is_string()) {
+      request.id = j.at("id").get<std::string>();
+    } else {
+      request.id = j.at("id").get<int>();
+    }
+
     j.at("method").get_to(request.method);
     if (j.contains("params")) {
       request.params = j["params"];
@@ -392,7 +403,227 @@ template <> struct adl_serializer<mcp::types::JSONRPCRequest> {
   }
 };
 
-// Add other serializers here...
+// JSONRPCResponse serialization
+template <> struct adl_serializer<mcp::types::JSONRPCResponse> {
+  static void to_json(json &j, const mcp::types::JSONRPCResponse &response) {
+    j = json::object();
+    j["jsonrpc"] = response.jsonrpc;
+
+    // Handle variant ID properly
+    std::visit([&j](const auto &id) { j["id"] = id; }, response.id);
+
+    j["result"] = response.result;
+  }
+
+  static void from_json(const json &j, mcp::types::JSONRPCResponse &response) {
+    j.at("jsonrpc").get_to(response.jsonrpc);
+
+    // Handle variant id (string or int)
+    if (j.at("id").is_string()) {
+      response.id = j.at("id").get<std::string>();
+    } else {
+      response.id = j.at("id").get<int>();
+    }
+
+    j.at("result").get_to(response.result);
+  }
+};
+
+// JSONRPCError serialization
+template <> struct adl_serializer<mcp::types::JSONRPCError> {
+  static void to_json(json &j, const mcp::types::JSONRPCError &error) {
+    j = json::object();
+    j["jsonrpc"] = error.jsonrpc;
+
+    // Handle variant ID properly
+    std::visit([&j](const auto &id) { j["id"] = id; }, error.id);
+
+    j["error"] = error.error;
+  }
+
+  static void from_json(const json &j, mcp::types::JSONRPCError &error) {
+    j.at("jsonrpc").get_to(error.jsonrpc);
+    if (j.at("id").is_string()) {
+      error.id = j.at("id").get<std::string>();
+    } else {
+      error.id = j.at("id").get<int>();
+    }
+    j.at("error").get_to(error.error);
+  }
+};
+
+// JSONRPCNotification serialization
+template <> struct adl_serializer<mcp::types::JSONRPCNotification> {
+  static void to_json(json &j,
+                      const mcp::types::JSONRPCNotification &notification) {
+    j = json::object();
+    j["jsonrpc"] = notification.jsonrpc;
+    j["method"] = notification.method;
+    if (notification.params) {
+      j["params"] = *notification.params;
+    }
+  }
+
+  static void from_json(const json &j,
+                        mcp::types::JSONRPCNotification &notification) {
+    j.at("jsonrpc").get_to(notification.jsonrpc);
+    j.at("method").get_to(notification.method);
+    if (j.contains("params")) {
+      notification.params = j["params"];
+    }
+  }
+};
+
+// ServerCapabilities serialization
+template <> struct adl_serializer<mcp::types::ServerCapabilities> {
+  static void to_json(json &j,
+                      const mcp::types::ServerCapabilities &capabilities) {
+    j = json::object();
+    j["supportsTools"] = capabilities.supportsTools;
+    j["supportsResources"] = capabilities.supportsResources;
+    j["supportsPrompts"] = capabilities.supportsPrompts;
+  }
+
+  static void from_json(const json &j,
+                        mcp::types::ServerCapabilities &capabilities) {
+    j.at("supportsTools").get_to(capabilities.supportsTools);
+    j.at("supportsResources").get_to(capabilities.supportsResources);
+    j.at("supportsPrompts").get_to(capabilities.supportsPrompts);
+  }
+};
+
+// ClientCapabilities serialization
+template <> struct adl_serializer<mcp::types::ClientCapabilities> {
+  static void to_json(json &j,
+                      const mcp::types::ClientCapabilities &capabilities) {
+    j = json::object();
+    j["supportsProgress"] = capabilities.supportsProgress;
+    j["supportsCancellation"] = capabilities.supportsCancellation;
+  }
+
+  static void from_json(const json &j,
+                        mcp::types::ClientCapabilities &capabilities) {
+    j.at("supportsProgress").get_to(capabilities.supportsProgress);
+    j.at("supportsCancellation").get_to(capabilities.supportsCancellation);
+  }
+};
+
+// ToolParameter serialization
+template <> struct adl_serializer<mcp::types::ToolParameter> {
+  static void to_json(json &j, const mcp::types::ToolParameter &param) {
+    j = json::object();
+    j["name"] = param.name;
+    j["description"] = param.description;
+    j["schema"] = param.schema;
+    j["required"] = param.required;
+  }
+
+  static void from_json(const json &j, mcp::types::ToolParameter &param) {
+    j.at("name").get_to(param.name);
+    j.at("description").get_to(param.description);
+    j.at("schema").get_to(param.schema);
+    j.at("required").get_to(param.required);
+  }
+};
+
+// Tool serialization
+template <> struct adl_serializer<mcp::types::Tool> {
+  static void to_json(json &j, const mcp::types::Tool &tool) {
+    j = json::object();
+    j["name"] = tool.name;
+    j["description"] = tool.description;
+
+    // Convert parameters to JSON array
+    json params_array = json::array();
+    for (const auto &param : tool.parameters) {
+      // Convert each parameter to JSON and add to array
+      json param_json = json(param); // Use the ToolParameter serializer
+      params_array.push_back(param_json);
+    }
+    j["parameters"] = params_array;
+
+    j["returns"] = tool.returns;
+  }
+
+  static void from_json(const json &j, mcp::types::Tool &tool) {
+    j.at("name").get_to(tool.name);
+    j.at("description").get_to(tool.description);
+
+    // Handle parameters array with manual conversion
+    tool.parameters.clear();
+    for (const auto &param_json : j.at("parameters")) {
+      mcp::types::ToolParameter param;
+      adl_serializer<mcp::types::ToolParameter>::from_json(param_json, param);
+      tool.parameters.push_back(param);
+    }
+
+    j.at("returns").get_to(tool.returns);
+  }
+};
+
+// InitializeParams serialization
+template <> struct adl_serializer<mcp::types::InitializeParams> {
+  static void to_json(json &j, const mcp::types::InitializeParams &params) {
+    j = json::object();
+
+    // First handle base class fields if any
+    if (params.meta) {
+      j["meta"] = *params.meta;
+    }
+
+    // Handle derived class fields
+    j["clientName"] = params.clientName;
+    j["clientVersion"] = params.clientVersion;
+    j["capabilities"] = params.capabilities;
+  }
+
+  static void from_json(const json &j, mcp::types::InitializeParams &params) {
+    // Handle base class fields if any
+    if (j.contains("meta")) {
+      params.meta = j["meta"].get<mcp::types::RequestMeta>();
+    }
+
+    // Handle derived class fields
+    j.at("clientName").get_to(params.clientName);
+    j.at("clientVersion").get_to(params.clientVersion);
+    j.at("capabilities").get_to(params.capabilities);
+  }
+};
+
+// InitializeResult serialization
+template <> struct adl_serializer<mcp::types::InitializeResult> {
+  static void to_json(json &j, const mcp::types::InitializeResult &result) {
+    j = json::object();
+
+    // First handle base class fields if any
+    if (result.meta) {
+      j["meta"] = *result.meta;
+    }
+
+    // Handle derived class fields
+    j["serverName"] = result.serverName;
+    j["serverVersion"] = result.serverVersion;
+    if (result.instructions) {
+      j["instructions"] = *result.instructions;
+    }
+    j["capabilities"] = result.capabilities;
+  }
+
+  static void from_json(const json &j, mcp::types::InitializeResult &result) {
+    // Handle base class fields if any
+    if (j.contains("meta")) {
+      result.meta = j["meta"];
+    }
+
+    // Handle derived class fields
+    j.at("serverName").get_to(result.serverName);
+    j.at("serverVersion").get_to(result.serverVersion);
+    if (j.contains("instructions")) {
+      result.instructions = j["instructions"].get<std::string>();
+    }
+    j.at("capabilities").get_to(result.capabilities);
+  }
+};
 
 } // namespace nlohmann
 

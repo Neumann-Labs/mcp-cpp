@@ -7,6 +7,9 @@ CLAUDE.md
 # Build Directory
 build/
 
+# Text file for debugging
+test_build_failures.txt
+
 # Prerequisites
 *.d
 
