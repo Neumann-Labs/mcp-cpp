@@ -65,6 +65,18 @@ MessageType getMessageType(const nlohmann::json &json);
 std::string serializeMessage(const types::JSONRPCMessage &message);
 
 } // namespace json_utils
+
+// Alias for backward compatibility
+namespace utils {
+inline types::JSONRPCMessage parse_json_message(const std::string &json_str) {
+  return json_utils::parseMessage(json_str);
+}
+
+inline std::string serialize_json(const types::JSONRPCMessage &message) {
+  return json_utils::serializeMessage(message);
+}
+} // namespace utils
+
 } // namespace mcp
 
 #endif // MCP_UTILS_JSON_UTILS_HPP_

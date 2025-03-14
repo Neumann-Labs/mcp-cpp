@@ -1,33 +1,38 @@
-[1/14] Building CXX object CMakeFiles/mcp.dir/src/types.cpp.o
-[2/14] Building CXX object CMakeFiles/mcp.dir/src/utils/error.cpp.o
-[3/14] Building CXX object examples/simple_server/CMakeFiles/echo_server.dir/echo_server.cpp.o
-[4/14] Building CXX object CMakeFiles/mcp.dir/src/transport/stdio_transport.cpp.o
-[5/14] Building CXX object examples/simple_client/CMakeFiles/echo_client.dir/echo_client.cpp.o
-[6/14] Building CXX object CMakeFiles/mcp.dir/src/utils/json_utils.cpp.o
-In file included from /home/c/dev/Neumann_Cyber/mcp-cpp/src/utils/json_utils.cpp:3:
-/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json_schema-src/src/nlohmann/json-schema.hpp: In member function ‘std::tuple<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > nlohmann::json_uri::tie() const’:
-/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json_schema-src/src/nlohmann/json-schema.hpp:65:67: warning: ‘nlohmann::json_abi_v3_11_2::json_pointer<RefStringType>::operator string_t() const [with RefStringType = std::__cxx11::basic_string<char>; string_t = std::__cxx11::basic_string<char>]’ is deprecated: Since 3.11.0; use to_string() [-Wdeprecated-declarations]
-   65 |                                 identifier_ != "" ? identifier_ : pointer_);
-      |                                                                   ^~~~~~~~
-In file included from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json-src/include/nlohmann/json.hpp:50,
-                 from /home/c/dev/Neumann_Cyber/mcp-cpp/include/mcp/types.hpp:5,
-                 from /home/c/dev/Neumann_Cyber/mcp-cpp/include/mcp/utils/json_utils.hpp:4,
-                 from /home/c/dev/Neumann_Cyber/mcp-cpp/src/utils/json_utils.cpp:1:
-/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json-src/include/nlohmann/detail/json_pointer.hpp:81:5: note: declared here
-   81 |     operator string_t() const
-      |     ^~~~~~~~
-/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json_schema-src/src/nlohmann/json-schema.hpp: In member function ‘std::string nlohmann::json_uri::fragment() const’:
-/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json_schema-src/src/nlohmann/json-schema.hpp:84:32: warning: ‘nlohmann::json_abi_v3_11_2::json_pointer<RefStringType>::operator string_t() const [with RefStringType = std::__cxx11::basic_string<char>; string_t = std::__cxx11::basic_string<char>]’ is deprecated: Since 3.11.0; use to_string() [-Wdeprecated-declarations]
-   84 |                         return pointer_;
-      |                                ^~~~~~~~
-/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json-src/include/nlohmann/detail/json_pointer.hpp:81:5: note: declared here
-   81 |     operator string_t() const
-      |     ^~~~~~~~
-[7/14] Building CXX object tests/CMakeFiles/mcp_tests.dir/unit/error_tests.cpp.o
-[8/14] Linking CXX static library libmcp.a
-[9/14] Building CXX object tests/CMakeFiles/mcp_tests.dir/unit/types_tests.cpp.o
-[10/14] Linking CXX executable examples/simple_server/echo_server
-[11/14] Linking CXX executable examples/simple_client/echo_client
-[12/14] Building CXX object tests/CMakeFiles/mcp_tests.dir/unit/transport_tests.cpp.o
-[13/14] Building CXX object tests/CMakeFiles/mcp_tests.dir/unit/json_utils_tests.cpp.o
-[14/14] Linking CXX executable tests/mcp_tests
+[1/6] Building CXX object CMakeFiles/mcp.dir/src/session/session.cpp.o
+FAILED: CMakeFiles/mcp.dir/src/session/session.cpp.o 
+/sbin/c++ -DMCP_USE_LIBCURL -I/home/c/dev/Neumann_Cyber/mcp-cpp/include -I/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json-src/include -I/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json_schema-src/src -g -std=c++17 -MD -MT CMakeFiles/mcp.dir/src/session/session.cpp.o -MF CMakeFiles/mcp.dir/src/session/session.cpp.o.d -o CMakeFiles/mcp.dir/src/session/session.cpp.o -c /home/c/dev/Neumann_Cyber/mcp-cpp/src/session/session.cpp
+/home/c/dev/Neumann_Cyber/mcp-cpp/src/session/session.cpp: In lambda function:
+/home/c/dev/Neumann_Cyber/mcp-cpp/src/session/session.cpp:321:25: error: ‘sleep_for’ is not a member of ‘std::this_thread’
+  321 |       std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      |                         ^~~~~~~~~
+[2/6] Building CXX object tests/CMakeFiles/mcp_tests.dir/unit/transport_tests.cpp.o
+FAILED: tests/CMakeFiles/mcp_tests.dir/unit/transport_tests.cpp.o 
+/sbin/c++  -I/home/c/dev/Neumann_Cyber/mcp-cpp/include -I/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json-src/include -I/home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json_schema-src/src -isystem /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/include -isystem /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest -isystem /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googlemock/include -isystem /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googlemock -g -std=c++17 -MD -MT tests/CMakeFiles/mcp_tests.dir/unit/transport_tests.cpp.o -MF tests/CMakeFiles/mcp_tests.dir/unit/transport_tests.cpp.o.d -o tests/CMakeFiles/mcp_tests.dir/unit/transport_tests.cpp.o -c /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:199:45: error: ‘CURLcode (* curl_easy_perform)(CURL*)’ redeclared as different kind of entity
+  199 |   extern CURLcode (*curl_easy_perform)(CURL*);
+      |                                             ^
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:47:12: note: previous declaration ‘CURLcode curl_easy_perform(CURL*)’
+   47 |   CURLcode curl_easy_perform(CURL* handle) {
+      |            ^~~~~~~~~~~~~~~~~
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:223:45: error: ‘CURLcode (* curl_easy_perform)(CURL*)’ redeclared as different kind of entity
+  223 |   extern CURLcode (*curl_easy_perform)(CURL*);
+      |                                             ^
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:47:12: note: previous declaration ‘CURLcode curl_easy_perform(CURL*)’
+   47 |   CURLcode curl_easy_perform(CURL* handle) {
+      |            ^~~~~~~~~~~~~~~~~
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp: In member function ‘virtual void HttpSseTransportTest_ConnectionFailure_Test::TestBody()’:
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:269:3: error: ‘error_callback_’ was not declared in this scope
+  269 |   error_callback_(ec);
+      |   ^~~~~~~~~~~~~~~
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp: At global scope:
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:333:45: error: ‘CURLcode (* curl_easy_perform)(CURL*)’ redeclared as different kind of entity
+  333 |   extern CURLcode (*curl_easy_perform)(CURL*);
+      |                                             ^
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:47:12: note: previous declaration ‘CURLcode curl_easy_perform(CURL*)’
+   47 |   CURLcode curl_easy_perform(CURL* handle) {
+      |            ^~~~~~~~~~~~~~~~~
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp: In member function ‘virtual void HttpSseTransportTest_ReconnectionLogic_Test::TestBody()’:
+/home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:400:3: error: ‘error_callback_’ was not declared in this scope
+  400 |   error_callback_(ec);
+      |   ^~~~~~~~~~~~~~~
+ninja: build stopped: subcommand failed.

@@ -94,6 +94,19 @@ void defaultHandler(Level level, const std::string &message,
                     const std::string &file, int line);
 
 } // namespace logging
+
+// Alias for backward compatibility
+namespace utils {
+using Level = logging::Level;
+using LogLevel = logging::Level;
+
+inline void log(LogLevel level, const std::string &message,
+                const std::string &file = "", int line = 0) {
+  logging::log(level, message, file, line);
+}
+
+inline bool isEnabled(LogLevel level) { return logging::isEnabled(level); }
+} // namespace utils
 } // namespace mcp
 
 // Convenience macros for logging

@@ -130,10 +130,11 @@ struct ToolParameter {
  * @brief Tool definition
  */
 struct Tool {
-  std::string name;                      ///< Tool name
-  std::string description;               ///< Tool description
-  std::vector<ToolParameter> parameters; ///< Tool parameters
-  nlohmann::json returns;                ///< JSON Schema for return value
+  std::string name;                           ///< Tool name
+  std::string description;                    ///< Tool description
+  std::vector<ToolParameter> parameters;      ///< Tool parameters
+  nlohmann::json returns;                     ///< JSON Schema for return value
+  std::optional<nlohmann::json> input_schema; ///< JSON Schema for the input
 };
 
 /**
@@ -166,20 +167,66 @@ struct Prompt {
 };
 
 /**
+ * @brief Tool capabilities
+ */
+struct ToolCapabilities {
+  bool supports_streaming = false; ///< Tool supports streaming
+};
+
+/**
+ * @brief Resource capabilities
+ */
+struct ResourceCapabilities {
+  bool supports_subscriptions = false; ///< Resource supports subscriptions
+};
+
+/**
+ * @brief Prompt capabilities
+ */
+struct PromptCapabilities {
+  bool supports_streaming = false; ///< Prompt supports streaming
+};
+
+/**
  * @brief Server capabilities
  */
 struct ServerCapabilities {
-  bool supportsTools = false;     ///< Server supports tool calls
-  bool supportsResources = false; ///< Server supports resources
-  bool supportsPrompts = false;   ///< Server supports prompts
+  bool supportsTools = false;                    ///< Server supports tool calls
+  bool supportsResources = false;                ///< Server supports resources
+  bool supportsPrompts = false;                  ///< Server supports prompts
+  std::optional<ToolCapabilities> tools;         ///< Tool capabilities
+  std::optional<ResourceCapabilities> resources; ///< Resource capabilities
+  std::optional<PromptCapabilities> prompts;     ///< Prompt capabilities
 };
 
 /**
  * @brief Client capabilities
  */
 struct ClientCapabilities {
-  bool supportsProgress = false;     ///< Client supports progress reporting
-  bool supportsCancellation = false; ///< Client supports cancellation
+  bool supportsProgress = false;         ///< Client supports progress reporting
+  bool supportsCancellation = false;     ///< Client supports cancellation
+  std::optional<ToolCapabilities> tools; ///< Tool capabilities
+  std::optional<ResourceCapabilities> resources; ///< Resource capabilities
+  std::optional<PromptCapabilities> prompts;     ///< Prompt capabilities
+};
+
+/**
+ * @brief Server information
+ */
+struct ServerInfo {
+  std::string name;                        ///< Server name
+  std::string version;                     ///< Server version
+  std::optional<std::string> instructions; ///< Optional usage instructions
+  std::optional<ServerCapabilities> capabilities; ///< Server capabilities
+};
+
+/**
+ * @brief Client information
+ */
+struct ClientInfo {
+  std::string name;                               ///< Client name
+  std::string version;                            ///< Client version
+  std::optional<ClientCapabilities> capabilities; ///< Client capabilities
 };
 
 /**
@@ -199,6 +246,41 @@ struct InitializeResult : Result {
   std::string serverVersion;               ///< Server version
   std::optional<std::string> instructions; ///< Optional usage instructions
   ServerCapabilities capabilities;         ///< Server capabilities
+
+  // For backwards compatibility with tests
+  struct ServerInfo {
+    std::string name;
+    std::string version;
+    std::optional<std::string> instructions;
+  } server_info;
+
+  // For backwards compatibility with tests
+  ServerCapabilities server_capabilities;
+
+  // Initialize backward compatibility fields in constructors
+  InitializeResult() = default;
+
+  InitializeResult(const InitializeResult &other)
+      : Result(other), serverName(other.serverName),
+        serverVersion(other.serverVersion), instructions(other.instructions),
+        capabilities(other.capabilities),
+        server_info{other.serverName, other.serverVersion, other.instructions},
+        server_capabilities(other.capabilities) {}
+
+  InitializeResult &operator=(const InitializeResult &other) {
+    if (this != &other) {
+      Result::operator=(other);
+      serverName = other.serverName;
+      serverVersion = other.serverVersion;
+      instructions = other.instructions;
+      capabilities = other.capabilities;
+      server_info.name = other.serverName;
+      server_info.version = other.serverVersion;
+      server_info.instructions = other.instructions;
+      server_capabilities = other.capabilities;
+    }
+    return *this;
+  }
 };
 
 /**
@@ -266,6 +348,30 @@ struct ReadResourceParams : RequestParams {
 struct ReadResourceResult : Result {
   std::string contentType; ///< Resource content type (MIME type)
   std::string content; ///< Resource content (may be encoded for binary data)
+
+  // For backward compatibility with old code
+  std::string content_type() const { return contentType; }
+
+  // Constructor with default values
+  ReadResourceResult() = default;
+
+  // Constructor to initialize fields
+  ReadResourceResult(const std::string &type, const std::string &cont)
+      : contentType(type), content(cont) {}
+
+  // Copy constructor
+  ReadResourceResult(const ReadResourceResult &other)
+      : Result(other), contentType(other.contentType), content(other.content) {}
+
+  // Assignment operator
+  ReadResourceResult &operator=(const ReadResourceResult &other) {
+    if (this != &other) {
+      Result::operator=(other);
+      contentType = other.contentType;
+      content = other.content;
+    }
+    return *this;
+  }
 };
 
 /**
@@ -295,6 +401,7 @@ struct GetPromptParams : RequestParams {
  */
 struct GetPromptResult : Result {
   std::string content; ///< Prompt content
+  std::string prompt;  ///< Generated prompt text
 };
 
 /**
@@ -543,6 +650,10 @@ template <> struct adl_serializer<mcp::types::Tool> {
     j["parameters"] = params_array;
 
     j["returns"] = tool.returns;
+
+    if (tool.input_schema) {
+      j["inputSchema"] = *tool.input_schema;
+    }
   }
 
   static void from_json(const json &j, mcp::types::Tool &tool) {
@@ -558,6 +669,10 @@ template <> struct adl_serializer<mcp::types::Tool> {
     }
 
     j.at("returns").get_to(tool.returns);
+
+    if (j.contains("inputSchema")) {
+      tool.input_schema = j["inputSchema"];
+    }
   }
 };
 
@@ -622,6 +737,149 @@ template <> struct adl_serializer<mcp::types::InitializeResult> {
       result.instructions = j["instructions"].get<std::string>();
     }
     j.at("capabilities").get_to(result.capabilities);
+
+    // Update backward compatibility fields
+    result.server_info.name = result.serverName;
+    result.server_info.version = result.serverVersion;
+    result.server_info.instructions = result.instructions;
+    result.server_capabilities = result.capabilities;
+  }
+};
+
+// ServerInfo serialization
+template <> struct adl_serializer<mcp::types::ServerInfo> {
+  static void to_json(json &j, const mcp::types::ServerInfo &info) {
+    j = json::object();
+    j["name"] = info.name;
+    j["version"] = info.version;
+    if (info.instructions) {
+      j["instructions"] = *info.instructions;
+    }
+    if (info.capabilities) {
+      j["capabilities"] = *info.capabilities;
+    }
+  }
+
+  static void from_json(const json &j, mcp::types::ServerInfo &info) {
+    j.at("name").get_to(info.name);
+    j.at("version").get_to(info.version);
+    if (j.contains("instructions")) {
+      info.instructions = j["instructions"].get<std::string>();
+    }
+    if (j.contains("capabilities")) {
+      info.capabilities =
+          j["capabilities"].get<mcp::types::ServerCapabilities>();
+    }
+  }
+};
+
+// ClientInfo serialization
+template <> struct adl_serializer<mcp::types::ClientInfo> {
+  static void to_json(json &j, const mcp::types::ClientInfo &info) {
+    j = json::object();
+    j["name"] = info.name;
+    j["version"] = info.version;
+    if (info.capabilities) {
+      j["capabilities"] = *info.capabilities;
+    }
+  }
+
+  static void from_json(const json &j, mcp::types::ClientInfo &info) {
+    j.at("name").get_to(info.name);
+    j.at("version").get_to(info.version);
+    if (j.contains("capabilities")) {
+      info.capabilities =
+          j["capabilities"].get<mcp::types::ClientCapabilities>();
+    }
+  }
+};
+
+// ToolCapabilities serialization
+template <> struct adl_serializer<mcp::types::ToolCapabilities> {
+  static void to_json(json &j,
+                      const mcp::types::ToolCapabilities &capabilities) {
+    j = json::object();
+    j["supportsStreaming"] = capabilities.supports_streaming;
+  }
+
+  static void from_json(const json &j,
+                        mcp::types::ToolCapabilities &capabilities) {
+    j.at("supportsStreaming").get_to(capabilities.supports_streaming);
+  }
+};
+
+// ResourceCapabilities serialization
+template <> struct adl_serializer<mcp::types::ResourceCapabilities> {
+  static void to_json(json &j,
+                      const mcp::types::ResourceCapabilities &capabilities) {
+    j = json::object();
+    j["supportsSubscriptions"] = capabilities.supports_subscriptions;
+  }
+
+  static void from_json(const json &j,
+                        mcp::types::ResourceCapabilities &capabilities) {
+    j.at("supportsSubscriptions").get_to(capabilities.supports_subscriptions);
+  }
+};
+
+// PromptCapabilities serialization
+template <> struct adl_serializer<mcp::types::PromptCapabilities> {
+  static void to_json(json &j,
+                      const mcp::types::PromptCapabilities &capabilities) {
+    j = json::object();
+    j["supportsStreaming"] = capabilities.supports_streaming;
+  }
+
+  static void from_json(const json &j,
+                        mcp::types::PromptCapabilities &capabilities) {
+    j.at("supportsStreaming").get_to(capabilities.supports_streaming);
+  }
+};
+
+// GetPromptResult serialization
+template <> struct adl_serializer<mcp::types::GetPromptResult> {
+  static void to_json(json &j, const mcp::types::GetPromptResult &result) {
+    j = json::object();
+    if (result.meta) {
+      j["meta"] = *result.meta;
+    }
+    j["content"] = result.content;
+    j["prompt"] = result.prompt;
+  }
+
+  static void from_json(const json &j, mcp::types::GetPromptResult &result) {
+    if (j.contains("meta")) {
+      result.meta = j["meta"];
+    }
+    j.at("content").get_to(result.content);
+    j.at("prompt").get_to(result.prompt);
+  }
+};
+
+// ReadResourceResult serialization
+template <> struct adl_serializer<mcp::types::ReadResourceResult> {
+  static void to_json(json &j, const mcp::types::ReadResourceResult &result) {
+    j = json::object();
+    if (result.meta) {
+      j["meta"] = *result.meta;
+    }
+    j["contentType"] = result.contentType;
+    j["content"] = result.content;
+  }
+
+  static void from_json(const json &j, mcp::types::ReadResourceResult &result) {
+    if (j.contains("meta")) {
+      result.meta = j["meta"];
+    }
+
+    // Support both contentType and content_type field names
+    if (j.contains("contentType")) {
+      j.at("contentType").get_to(result.contentType);
+    } else if (j.contains("content_type")) {
+      j.at("content_type").get_to(result.contentType);
+    }
+
+    j.at("content").get_to(result.content);
   }
 };
 

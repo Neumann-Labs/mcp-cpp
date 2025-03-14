@@ -30,6 +30,13 @@ TransportException::TransportException(types::ErrorCode code,
   }
 }
 
+TransportException::TransportException(const std::error_code &error)
+    : MCPException(types::ErrorCode::TransportError, error.message()) {
+  // Add the error code as additional data
+  error_data().data = {{"error_code", error.value()},
+                       {"category", error.category().name()}};
+}
+
 ProtocolException::ProtocolException(const std::string &message,
                                      const nlohmann::json &data)
     : MCPException(types::ErrorCode::ProtocolError, message) {
@@ -46,6 +53,9 @@ ProtocolException::ProtocolException(types::ErrorCode code,
     error_data().data = data;
   }
 }
+
+ProtocolException::ProtocolException(const types::ErrorData &error)
+    : MCPException(error) {}
 
 TimeoutException::TimeoutException(const std::string &message,
                                    const nlohmann::json &data)

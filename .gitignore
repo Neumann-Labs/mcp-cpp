@@ -10,6 +10,9 @@ build/
 # Text file for debugging
 test_build_failures.txt
 
+# Testing dir
+Testing/
+
 # Prerequisites
 *.d
 

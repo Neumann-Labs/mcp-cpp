@@ -71,6 +71,13 @@ public:
    */
   explicit TransportException(types::ErrorCode code, const std::string &message,
                               const nlohmann::json &data = nullptr);
+
+  /**
+   * @brief Construct a new TransportException from a std::error_code
+   *
+   * @param error The std::error_code
+   */
+  explicit TransportException(const std::error_code &error);
 };
 
 /**
@@ -96,6 +103,13 @@ public:
    */
   explicit ProtocolException(types::ErrorCode code, const std::string &message,
                              const nlohmann::json &data = nullptr);
+
+  /**
+   * @brief Construct a new ProtocolException from error data
+   *
+   * @param error The error data
+   */
+  explicit ProtocolException(const types::ErrorData &error);
 };
 
 /**
@@ -148,6 +162,13 @@ types::JSONRPCError
 createErrorResponse(const std::variant<std::string, int> &id,
                     types::ErrorCode code, const std::string &message,
                     const nlohmann::json &data = nullptr);
+
+// Alias for backward compatibility
+namespace utils {
+using ProtocolException = mcp::ProtocolException;
+using TransportException = mcp::TransportException;
+using TimeoutException = mcp::TimeoutException;
+} // namespace utils
 
 } // namespace mcp
 

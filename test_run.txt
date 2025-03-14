@@ -1,0 +1,821 @@
+UpdateCTestConfiguration  from :/home/c/dev/Neumann_Cyber/mcp-cpp/build/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/home/c/dev/Neumann_Cyber/mcp-cpp/build/DartConfiguration.tcl
+Test project /home/c/dev/Neumann_Cyber/mcp-cpp/build
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 105
+      Start 105: AdvancedSessionTest.MessageStreamOrdering
+
+105: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedSessionTest.MessageStreamOrdering" "--gtest_also_run_disabled_tests"
+105: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+105: Test timeout computed to be: 10000000
+105: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+105: Note: Google Test filter = AdvancedSessionTest.MessageStreamOrdering
+105: [==========] Running 1 test from 1 test suite.
+105: [----------] Global test environment set-up.
+105: [----------] 1 test from AdvancedSessionTest
+105: [ RUN      ] AdvancedSessionTest.MessageStreamOrdering
+105: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:240: Failure
+105: Expected equality of these values:
+105:   notifications.size()
+105:     Which is: 0
+105:   NUM_NOTIFICATIONS
+105:     Which is: 10
+105: 
+105: [  FAILED  ] AdvancedSessionTest.MessageStreamOrdering (0 ms)
+105: [----------] 1 test from AdvancedSessionTest (0 ms total)
+105: 
+105: [----------] Global test environment tear-down
+105: [==========] 1 test from 1 test suite ran. (0 ms total)
+105: [  PASSED  ] 0 tests.
+105: [  FAILED  ] 1 test, listed below:
+105: [  FAILED  ] AdvancedSessionTest.MessageStreamOrdering
+105: 
+105:  1 FAILED TEST
+ 1/25 Test #105: AdvancedSessionTest.MessageStreamOrdering .................***Failed    0.00 sec
+test 109
+      Start 109: AdvancedServerSessionTest.ErrorResponseHandling
+
+109: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedServerSessionTest.ErrorResponseHandling" "--gtest_also_run_disabled_tests"
+109: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+109: Test timeout computed to be: 10000000
+109: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+109: Note: Google Test filter = AdvancedServerSessionTest.ErrorResponseHandling
+109: [==========] Running 1 test from 1 test suite.
+109: [----------] Global test environment set-up.
+109: [----------] 1 test from AdvancedServerSessionTest
+109: [ RUN      ] AdvancedServerSessionTest.ErrorResponseHandling
+109: [INFO] [2025-03-06 20:49:55] Client connected:  v
+109: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:472: Failure
+109: Value of: std::holds_alternative<mcp::types::JSONRPCError>(message)
+109:   Actual: false
+109: Expected: true
+109: 
+109: [  FAILED  ] AdvancedServerSessionTest.ErrorResponseHandling (0 ms)
+109: [----------] 1 test from AdvancedServerSessionTest (0 ms total)
+109: 
+109: [----------] Global test environment tear-down
+109: [==========] 1 test from 1 test suite ran. (0 ms total)
+109: [  PASSED  ] 0 tests.
+109: [  FAILED  ] 1 test, listed below:
+109: [  FAILED  ] AdvancedServerSessionTest.ErrorResponseHandling
+109: 
+109:  1 FAILED TEST
+ 2/25 Test #109: AdvancedServerSessionTest.ErrorResponseHandling ...........***Failed    0.00 sec
+test 110
+      Start 110: AdvancedServerSessionTest.ServerNotificationSending
+
+110: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedServerSessionTest.ServerNotificationSending" "--gtest_also_run_disabled_tests"
+110: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+110: Test timeout computed to be: 10000000
+110: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+110: Note: Google Test filter = AdvancedServerSessionTest.ServerNotificationSending
+110: [==========] Running 1 test from 1 test suite.
+110: [----------] Global test environment set-up.
+110: [----------] 1 test from AdvancedServerSessionTest
+110: [ RUN      ] AdvancedServerSessionTest.ServerNotificationSending
+110: [INFO] [2025-03-06 20:49:55] Client connected:  v
+110: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:526: Failure
+110: Value of: notification.params->contains("progress")
+110:   Actual: false
+110: Expected: true
+110: 
+110: [  FAILED  ] AdvancedServerSessionTest.ServerNotificationSending (0 ms)
+110: [----------] 1 test from AdvancedServerSessionTest (0 ms total)
+110: 
+110: [----------] Global test environment tear-down
+110: [==========] 1 test from 1 test suite ran. (0 ms total)
+110: [  PASSED  ] 0 tests.
+110: [  FAILED  ] 1 test, listed below:
+110: [  FAILED  ] AdvancedServerSessionTest.ServerNotificationSending
+110: 
+110:  1 FAILED TEST
+ 3/25 Test #110: AdvancedServerSessionTest.ServerNotificationSending .......***Failed    0.00 sec
+test 111
+      Start 111: AdvancedServerSessionTest.ResourceRegistrationAndAccess
+
+111: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedServerSessionTest.ResourceRegistrationAndAccess" "--gtest_also_run_disabled_tests"
+111: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+111: Test timeout computed to be: 10000000
+111: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+111: Note: Google Test filter = AdvancedServerSessionTest.ResourceRegistrationAndAccess
+111: [==========] Running 1 test from 1 test suite.
+111: [----------] Global test environment set-up.
+111: [----------] 1 test from AdvancedServerSessionTest
+111: [ RUN      ] AdvancedServerSessionTest.ResourceRegistrationAndAccess
+111: [INFO] [2025-03-06 20:49:55] Client connected:  v
+111: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:603: Failure
+111: Value of: response.result.contains("content")
+111:   Actual: false
+111: Expected: true
+111: 
+111: mcp_tests: /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/json-src/include/nlohmann/json.hpp:2135: const nlohmann::json_abi_v3_11_2::basic_json<ObjectType, ArrayType, StringType, BooleanType, NumberIntegerType, NumberUnsignedType, NumberFloatType, AllocatorType, JSONSerializer, BinaryType>::value_type& nlohmann::json_abi_v3_11_2::basic_json<ObjectType, ArrayType, StringType, BooleanType, NumberIntegerType, NumberUnsignedType, NumberFloatType, AllocatorType, JSONSerializer, BinaryType>::operator[](const typename object_t::key_type&) const [with ObjectType = std::map; ArrayType = std::vector; StringType = std::__cxx11::basic_string<char>; BooleanType = bool; NumberIntegerType = long int; NumberUnsignedType = long unsigned int; NumberFloatType = double; AllocatorType = std::allocator; JSONSerializer = nlohmann::json_abi_v3_11_2::adl_serializer; BinaryType = std::vector<unsigned char>; const_reference = const nlohmann::json_abi_v3_11_2::basic_json<>&; typename object_t::key_type = std::__cxx11::basic_string<char>; object_t = std::map<std::__cxx11::basic_string<char>, nlohmann::json_abi_v3_11_2::basic_json<>, std::less<void>, std::allocator<std::pair<const std::__cxx11::basic_string<char>, nlohmann::json_abi_v3_11_2::basic_json<> > > >]: Assertion `it != m_value.object->end()' failed.
+ 4/25 Test #111: AdvancedServerSessionTest.ResourceRegistrationAndAccess ...Subprocess aborted***Exception:   0.08 sec
+test 112
+      Start 112: AdvancedClientSessionTest.ToolDiscovery
+
+112: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedClientSessionTest.ToolDiscovery" "--gtest_also_run_disabled_tests"
+112: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+112: Test timeout computed to be: 10000000
+112: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+112: Note: Google Test filter = AdvancedClientSessionTest.ToolDiscovery
+112: [==========] Running 1 test from 1 test suite.
+112: [----------] Global test environment set-up.
+112: [----------] 1 test from AdvancedClientSessionTest
+112: [ RUN      ] AdvancedClientSessionTest.ToolDiscovery
+112: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:733: Failure
+112: Expected equality of these values:
+112:   future.wait_for(std::chrono::seconds(0))
+112:     Which is: 4-byte object <02-00 00-00>
+112:   std::future_status::ready
+112:     Which is: 4-byte object <00-00 00-00>
+112: 
+112: [  FAILED  ] AdvancedClientSessionTest.ToolDiscovery (0 ms)
+112: [----------] 1 test from AdvancedClientSessionTest (0 ms total)
+112: 
+112: [----------] Global test environment tear-down
+112: [==========] 1 test from 1 test suite ran. (0 ms total)
+112: [  PASSED  ] 0 tests.
+112: [  FAILED  ] 1 test, listed below:
+112: [  FAILED  ] AdvancedClientSessionTest.ToolDiscovery
+112: 
+112:  1 FAILED TEST
+ 5/25 Test #112: AdvancedClientSessionTest.ToolDiscovery ...................***Failed    0.00 sec
+test 113
+      Start 113: AdvancedClientSessionTest.ToolInvocation
+
+113: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedClientSessionTest.ToolInvocation" "--gtest_also_run_disabled_tests"
+113: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+113: Test timeout computed to be: 10000000
+113: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+113: Note: Google Test filter = AdvancedClientSessionTest.ToolInvocation
+113: [==========] Running 1 test from 1 test suite.
+113: [----------] Global test environment set-up.
+113: [----------] 1 test from AdvancedClientSessionTest
+113: [ RUN      ] AdvancedClientSessionTest.ToolInvocation
+113: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:791: Failure
+113: Expected equality of these values:
+113:   future.wait_for(std::chrono::seconds(0))
+113:     Which is: 4-byte object <02-00 00-00>
+113:   std::future_status::ready
+113:     Which is: 4-byte object <00-00 00-00>
+113: 
+113: [  FAILED  ] AdvancedClientSessionTest.ToolInvocation (0 ms)
+113: [----------] 1 test from AdvancedClientSessionTest (0 ms total)
+113: 
+113: [----------] Global test environment tear-down
+113: [==========] 1 test from 1 test suite ran. (0 ms total)
+113: [  PASSED  ] 0 tests.
+113: [  FAILED  ] 1 test, listed below:
+113: [  FAILED  ] AdvancedClientSessionTest.ToolInvocation
+113: 
+113:  1 FAILED TEST
+ 6/25 Test #113: AdvancedClientSessionTest.ToolInvocation ..................***Failed    0.00 sec
+test 114
+      Start 114: AdvancedClientSessionTest.PromptDiscoveryAndExecution
+
+114: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=AdvancedClientSessionTest.PromptDiscoveryAndExecution" "--gtest_also_run_disabled_tests"
+114: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+114: Test timeout computed to be: 10000000
+114: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+114: Note: Google Test filter = AdvancedClientSessionTest.PromptDiscoveryAndExecution
+114: [==========] Running 1 test from 1 test suite.
+114: [----------] Global test environment set-up.
+114: [----------] 1 test from AdvancedClientSessionTest
+114: [ RUN      ] AdvancedClientSessionTest.PromptDiscoveryAndExecution
+114: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:852: Failure
+114: Expected equality of these values:
+114:   list_future.wait_for(std::chrono::seconds(0))
+114:     Which is: 4-byte object <02-00 00-00>
+114:   std::future_status::ready
+114:     Which is: 4-byte object <00-00 00-00>
+114: 
+114: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/additional_session_tests.cpp:882: Failure
+114: Expected equality of these values:
+114:   get_future.wait_for(std::chrono::seconds(0))
+114:     Which is: 4-byte object <02-00 00-00>
+114:   std::future_status::ready
+114:     Which is: 4-byte object <00-00 00-00>
+114: 
+114: [  FAILED  ] AdvancedClientSessionTest.PromptDiscoveryAndExecution (0 ms)
+114: [----------] 1 test from AdvancedClientSessionTest (0 ms total)
+114: 
+114: [----------] Global test environment tear-down
+114: [==========] 1 test from 1 test suite ran. (0 ms total)
+114: [  PASSED  ] 0 tests.
+114: [  FAILED  ] 1 test, listed below:
+114: [  FAILED  ] AdvancedClientSessionTest.PromptDiscoveryAndExecution
+114: 
+114:  1 FAILED TEST
+ 7/25 Test #114: AdvancedClientSessionTest.PromptDiscoveryAndExecution .....***Failed    0.00 sec
+test 116
+      Start 116: HttpSseTransportTest.SynchronousSend
+
+116: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=HttpSseTransportTest.SynchronousSend" "--gtest_also_run_disabled_tests"
+116: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+116: Test timeout computed to be: 10000000
+116: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+116: Note: Google Test filter = HttpSseTransportTest.SynchronousSend
+116: [==========] Running 1 test from 1 test suite.
+116: [----------] Global test environment set-up.
+116: [----------] 1 test from HttpSseTransportTest
+116: [ RUN      ] HttpSseTransportTest.SynchronousSend
+116: [INFO] [2025-03-06 20:49:55] [INFO] [2025-03-06 20:49:55] SSE thread startedHTTP thread started
+116: 
+116: [ERROR] [2025-03-06 20:49:55] HTTP request returned error code: 0
+116: [ERROR] [2025-03-06 20:49:55] Failed to send HTTP request: Protocol error
+116: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:203: Failure
+116: Value of: error
+116:   Actual: true
+116: Expected: false
+116: 
+116: [INFO] [2025-03-06 20:49:55] SSE thread stopped
+116: [INFO] [2025-03-06 20:49:55] HTTP thread stopped
+116: [  FAILED  ] HttpSseTransportTest.SynchronousSend (0 ms)
+116: [----------] 1 test from HttpSseTransportTest (0 ms total)
+116: 
+116: [----------] Global test environment tear-down
+116: [==========] 1 test from 1 test suite ran. (0 ms total)
+116: [  PASSED  ] 0 tests.
+116: [  FAILED  ] 1 test, listed below:
+116: [  FAILED  ] HttpSseTransportTest.SynchronousSend
+116: 
+116:  1 FAILED TEST
+ 8/25 Test #116: HttpSseTransportTest.SynchronousSend ......................***Failed    0.00 sec
+test 117
+      Start 117: HttpSseTransportTest.AsynchronousSend
+
+117: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=HttpSseTransportTest.AsynchronousSend" "--gtest_also_run_disabled_tests"
+117: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+117: Test timeout computed to be: 10000000
+117: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+117: Note: Google Test filter = HttpSseTransportTest.AsynchronousSend
+117: [==========] Running 1 test from 1 test suite.
+117: [----------] Global test environment set-up.
+117: [----------] 1 test from HttpSseTransportTest
+117: [ RUN      ] HttpSseTransportTest.AsynchronousSend
+117: [INFO] [2025-03-06 20:49:56] HTTP thread started
+117: [INFO] [2025-03-06 20:49:56] SSE thread started
+117: [ERROR] [2025-03-06 20:49:56] HTTP request returned error code: 0
+117: [ERROR] [2025-03-06 20:49:56] Failed to send HTTP request: Protocol error
+117: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:228: Failure
+117: Value of: error
+117:   Actual: true
+117: Expected: false
+117: 
+117: [INFO] [2025-03-06 20:49:56] SSE thread stopped
+117: [INFO] [2025-03-06 20:49:56] HTTP thread stopped
+117: [  FAILED  ] HttpSseTransportTest.AsynchronousSend (0 ms)
+117: [----------] 1 test from HttpSseTransportTest (0 ms total)
+117: 
+117: [----------] Global test environment tear-down
+117: [==========] 1 test from 1 test suite ran. (0 ms total)
+117: [  PASSED  ] 0 tests.
+117: [  FAILED  ] 1 test, listed below:
+117: [  FAILED  ] HttpSseTransportTest.AsynchronousSend
+117: 
+117:  1 FAILED TEST
+ 9/25 Test #117: HttpSseTransportTest.AsynchronousSend .....................***Failed    0.00 sec
+test 118
+      Start 118: HttpSseTransportTest.ConnectionFailure
+
+118: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=HttpSseTransportTest.ConnectionFailure" "--gtest_also_run_disabled_tests"
+118: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+118: Test timeout computed to be: 10000000
+118: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+118: Note: Google Test filter = HttpSseTransportTest.ConnectionFailure
+118: [==========] Running 1 test from 1 test suite.
+118: [----------] Global test environment set-up.
+118: [----------] 1 test from HttpSseTransportTest
+118: [ RUN      ] HttpSseTransportTest.ConnectionFailure
+118: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:243: Failure
+118: Value of: errors_.empty()
+118:   Actual: true
+118: Expected: false
+118: 
+118: [[INFO] [2025-03-06 20:49:56] SSE thread startedINFO] [2025-03-06 20:49:56] HTTP thread started
+118: 
+118: [INFO] [2025-03-06 20:49:56] HTTP thread stopped
+118: [INFO] [2025-03-06 20:49:56] SSE thread stopped
+118: [  FAILED  ] HttpSseTransportTest.ConnectionFailure (0 ms)
+118: [----------] 1 test from HttpSseTransportTest (0 ms total)
+118: 
+118: [----------] Global test environment tear-down
+118: [==========] 1 test from 1 test suite ran. (0 ms total)
+118: [  PASSED  ] 0 tests.
+118: [  FAILED  ] 1 test, listed below:
+118: [  FAILED  ] HttpSseTransportTest.ConnectionFailure
+118: 
+118:  1 FAILED TEST
+10/25 Test #118: HttpSseTransportTest.ConnectionFailure ....................***Failed    0.00 sec
+test 121
+      Start 121: HttpSseTransportTest.LargeMessage
+
+121: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=HttpSseTransportTest.LargeMessage" "--gtest_also_run_disabled_tests"
+121: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+121: Test timeout computed to be: 10000000
+121: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+121: Note: Google Test filter = HttpSseTransportTest.LargeMessage
+121: [==========] Running 1 test from 1 test suite.
+121: [----------] Global test environment set-up.
+121: [----------] 1 test from HttpSseTransportTest
+121: [ RUN      ] HttpSseTransportTest.LargeMessage
+121: [INFO] [2025-03-06 20:49:56[INFO] [2025-03-06 20:49:56] SSE thread started] 
+121: HTTP thread started
+121: [ERROR] [2025-03-06 20:49:56] HTTP request returned error code: 0
+121: [ERROR] [2025-03-06 20:49:56] Failed to send HTTP request: Protocol error
+121: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:316: Failure
+121: Value of: error
+121:   Actual: true
+121: Expected: false
+121: 
+121: [INFO] [2025-03-06 20:49:56] SSE thread stopped
+121: [INFO] [2025-03-06 20:49:56] HTTP thread stopped
+121: [  FAILED  ] HttpSseTransportTest.LargeMessage (3 ms)
+121: [----------] 1 test from HttpSseTransportTest (3 ms total)
+121: 
+121: [----------] Global test environment tear-down
+121: [==========] 1 test from 1 test suite ran. (3 ms total)
+121: [  PASSED  ] 0 tests.
+121: [  FAILED  ] 1 test, listed below:
+121: [  FAILED  ] HttpSseTransportTest.LargeMessage
+121: 
+121:  1 FAILED TEST
+11/25 Test #121: HttpSseTransportTest.LargeMessage .........................***Failed    0.01 sec
+test 122
+      Start 122: HttpSseTransportTest.TimeoutHandling
+
+122: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=HttpSseTransportTest.TimeoutHandling" "--gtest_also_run_disabled_tests"
+122: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+122: Test timeout computed to be: 10000000
+122: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+122: Note: Google Test filter = HttpSseTransportTest.TimeoutHandling
+122: [==========] Running 1 test from 1 test suite.
+122: [----------] Global test environment set-up.
+122: [----------] 1 test from HttpSseTransportTest
+122: [ RUN      ] HttpSseTransportTest.TimeoutHandling
+122: [INFO] [2025-03-06 20:49:56] [INFO] [2025-03-06 20:49:56] SSE thread startedHTTP thread started
+122: 
+122: [ERROR] [2025-03-06 20:49:56] HTTP request failed: Timeout was reached
+122: [ERROR] [2025-03-06 20:49:56] SSE connection failed: Timeout was reached
+122: [ERROR] [2025-03-06 20:49:56] Failed to send HTTP request: No space left on device
+122: [INFO] [2025-03-06 20:49:56[INFO] [2025-03-06 20:49:56] HTTP thread stopped
+122: ] Reconnecting to SSE (attempt 1)
+122: terminate called without an active exception
+12/25 Test #122: HttpSseTransportTest.TimeoutHandling ......................Subprocess aborted***Exception:   0.27 sec
+test 123
+      Start 123: HttpSseTransportTest.ReconnectionLogic
+
+123: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=HttpSseTransportTest.ReconnectionLogic" "--gtest_also_run_disabled_tests"
+123: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+123: Test timeout computed to be: 10000000
+123: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+123: Note: Google Test filter = HttpSseTransportTest.ReconnectionLogic
+123: [==========] Running 1 test from 1 test suite.
+123: [----------] Global test environment set-up.
+123: [----------] 1 test from HttpSseTransportTest
+123: [ RUN      ] HttpSseTransportTest.ReconnectionLogic
+123: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/transport_tests.cpp:351: Failure
+123: Value of: errors_.empty()
+123:   Actual: true
+123: Expected: false
+123: 
+123: [[INFO] [2025-03-06 20:49:56] SSE thread started
+123: INFO] [2025-03-06 20:49:56] HTTP thread started
+123: [INFO] [2025-03-06 20:49:56] SSE thread stopped
+123: [INFO] [2025-03-06 20:49:56] HTTP thread stopped
+123: [  FAILED  ] HttpSseTransportTest.ReconnectionLogic (0 ms)
+123: [----------] 1 test from HttpSseTransportTest (0 ms total)
+123: 
+123: [----------] Global test environment tear-down
+123: [==========] 1 test from 1 test suite ran. (0 ms total)
+123: [  PASSED  ] 0 tests.
+123: [  FAILED  ] 1 test, listed below:
+123: [  FAILED  ] HttpSseTransportTest.ReconnectionLogic
+123: 
+123:  1 FAILED TEST
+13/25 Test #123: HttpSseTransportTest.ReconnectionLogic ....................***Failed    0.00 sec
+test 128
+      Start 128: ClientServerImplTest.ServerInitialization
+
+128: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=ClientServerImplTest.ServerInitialization" "--gtest_also_run_disabled_tests"
+128: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+128: Test timeout computed to be: 10000000
+128: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+128: Note: Google Test filter = ClientServerImplTest.ServerInitialization
+128: [==========] Running 1 test from 1 test suite.
+128: [----------] Global test environment set-up.
+128: [----------] 1 test from ClientServerImplTest
+128: [ RUN      ] ClientServerImplTest.ServerInitialization
+128: [INFO] [2025-03-06 20:49:56] Server started: test-server v1.0.0
+128: [INFO] [2025-03-06 20:49:56] Client connected: test-client v1.0.0
+128: [INFO] [2025-03-06 20:49:56] Client initializing: test-client v1.0.0
+128: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:148: Failure
+128: Expected equality of these values:
+128:   future.wait_for(std::chrono::seconds(1))
+128:     Which is: 4-byte object <02-00 00-00>
+128:   std::future_status::ready
+128:     Which is: 4-byte object <00-00 00-00>
+128: 
+128: [INFO] [2025-03-06 20:49:56] Client disconnected
+128: [INFO] [2025-03-06 20:49:56] Server stopped
+128: [  FAILED  ] ClientServerImplTest.ServerInitialization (0 ms)
+128: [----------] 1 test from ClientServerImplTest (0 ms total)
+128: 
+128: [----------] Global test environment tear-down
+128: [==========] 1 test from 1 test suite ran. (0 ms total)
+128: [  PASSED  ] 0 tests.
+128: [  FAILED  ] 1 test, listed below:
+128: [  FAILED  ] ClientServerImplTest.ServerInitialization
+128: 
+128:  1 FAILED TEST
+14/25 Test #128: ClientServerImplTest.ServerInitialization .................***Failed    0.00 sec
+test 129
+      Start 129: ClientServerImplTest.ToolRegistrationAndInvocation
+
+129: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=ClientServerImplTest.ToolRegistrationAndInvocation" "--gtest_also_run_disabled_tests"
+129: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+129: Test timeout computed to be: 10000000
+129: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+129: Note: Google Test filter = ClientServerImplTest.ToolRegistrationAndInvocation
+129: [==========] Running 1 test from 1 test suite.
+129: [----------] Global test environment set-up.
+129: [----------] 1 test from ClientServerImplTest
+129: [ RUN      ] ClientServerImplTest.ToolRegistrationAndInvocation
+129: [INFO] [2025-03-06 20:49:56] Server started: test-server v1.0.0
+129: [INFO] [2025-03-06 20:49:56] Client connected: test-client v1.0.0
+129: [INFO] [2025-03-06 20:49:56] Client initializing: test-client v1.0.0
+129: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:204: Failure
+129: Expected equality of these values:
+129:   call_future.wait_for(std::chrono::seconds(1))
+129:     Which is: 4-byte object <02-00 00-00>
+129:   std::future_status::ready
+129:     Which is: 4-byte object <00-00 00-00>
+129: 
+129: [INFO] [2025-03-06 20:49:56] Client disconnected
+129: [INFO] [2025-03-06 20:49:56] Server stopped
+129: [  FAILED  ] ClientServerImplTest.ToolRegistrationAndInvocation (0 ms)
+129: [----------] 1 test from ClientServerImplTest (0 ms total)
+129: 
+129: [----------] Global test environment tear-down
+129: [==========] 1 test from 1 test suite ran. (0 ms total)
+129: [  PASSED  ] 0 tests.
+129: [  FAILED  ] 1 test, listed below:
+129: [  FAILED  ] ClientServerImplTest.ToolRegistrationAndInvocation
+129: 
+129:  1 FAILED TEST
+15/25 Test #129: ClientServerImplTest.ToolRegistrationAndInvocation ........***Failed    0.00 sec
+test 130
+      Start 130: ClientServerImplTest.ResourceRegistrationAndRetrieval
+
+130: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=ClientServerImplTest.ResourceRegistrationAndRetrieval" "--gtest_also_run_disabled_tests"
+130: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+130: Test timeout computed to be: 10000000
+130: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+130: Note: Google Test filter = ClientServerImplTest.ResourceRegistrationAndRetrieval
+130: [==========] Running 1 test from 1 test suite.
+130: [----------] Global test environment set-up.
+130: [----------] 1 test from ClientServerImplTest
+130: [ RUN      ] ClientServerImplTest.ResourceRegistrationAndRetrieval
+130: [INFO] [2025-03-06 20:49:56] Server started: test-server v1.0.0
+130: [INFO] [2025-03-06 20:49:56] Client connected: test-client v1.0.0
+130: [INFO] [2025-03-06 20:49:56] Client initializing: test-client v1.0.0
+130: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:245: Failure
+130: Expected equality of these values:
+130:   read_future.wait_for(std::chrono::seconds(1))
+130:     Which is: 4-byte object <02-00 00-00>
+130:   std::future_status::ready
+130:     Which is: 4-byte object <00-00 00-00>
+130: 
+130: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:249: Failure
+130: Expected equality of these values:
+130:   read_result.content
+130:     Which is: "text/plain"
+130:   "This is a sample text resource."
+130: 
+130: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:250: Failure
+130: Expected equality of these values:
+130:   read_result.content_type()
+130:     Which is: "This is a sample text resource."
+130:   "text/plain"
+130: 
+130: [INFO] [2025-03-06 20:49:56] Client disconnected
+130: [INFO] [2025-03-06 20:49:56] Server stopped
+130: [  FAILED  ] ClientServerImplTest.ResourceRegistrationAndRetrieval (0 ms)
+130: [----------] 1 test from ClientServerImplTest (0 ms total)
+130: 
+130: [----------] Global test environment tear-down
+130: [==========] 1 test from 1 test suite ran. (0 ms total)
+130: [  PASSED  ] 0 tests.
+130: [  FAILED  ] 1 test, listed below:
+130: [  FAILED  ] ClientServerImplTest.ResourceRegistrationAndRetrieval
+130: 
+130:  1 FAILED TEST
+16/25 Test #130: ClientServerImplTest.ResourceRegistrationAndRetrieval .....***Failed    0.00 sec
+test 132
+      Start 132: ClientServerImplTest.ErrorHandling
+
+132: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=ClientServerImplTest.ErrorHandling" "--gtest_also_run_disabled_tests"
+132: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+132: Test timeout computed to be: 10000000
+132: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+132: Note: Google Test filter = ClientServerImplTest.ErrorHandling
+132: [==========] Running 1 test from 1 test suite.
+132: [----------] Global test environment set-up.
+132: [----------] 1 test from ClientServerImplTest
+132: [ RUN      ] ClientServerImplTest.ErrorHandling
+132: [INFO] [2025-03-06 20:49:56] Server started: test-server v1.0.0
+132: [INFO] [2025-03-06 20:49:56] Client connected: test-client v1.0.0
+132: [INFO] [2025-03-06 20:49:56] Client initializing: test-client v1.0.0
+132: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:323: Failure
+132: Expected equality of these values:
+132:   call_future.wait_for(std::chrono::seconds(1))
+132:     Which is: 4-byte object <02-00 00-00>
+132:   std::future_status::ready
+132:     Which is: 4-byte object <00-00 00-00>
+132: 
+132: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:328: Failure
+132: Failed
+132: Expected an exception
+132: 
+132: [INFO] [2025-03-06 20:49:56] Client disconnected
+132: [INFO] [2025-03-06 20:49:56] Server stopped
+132: [  FAILED  ] ClientServerImplTest.ErrorHandling (0 ms)
+132: [----------] 1 test from ClientServerImplTest (0 ms total)
+132: 
+132: [----------] Global test environment tear-down
+132: [==========] 1 test from 1 test suite ran. (0 ms total)
+132: [  PASSED  ] 0 tests.
+132: [  FAILED  ] 1 test, listed below:
+132: [  FAILED  ] ClientServerImplTest.ErrorHandling
+132: 
+132:  1 FAILED TEST
+17/25 Test #132: ClientServerImplTest.ErrorHandling ........................***Failed    0.00 sec
+test 133
+      Start 133: ClientServerImplTest.MissingRequiredParameter
+
+133: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=ClientServerImplTest.MissingRequiredParameter" "--gtest_also_run_disabled_tests"
+133: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+133: Test timeout computed to be: 10000000
+133: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+133: Note: Google Test filter = ClientServerImplTest.MissingRequiredParameter
+133: [==========] Running 1 test from 1 test suite.
+133: [----------] Global test environment set-up.
+133: [----------] 1 test from ClientServerImplTest
+133: [ RUN      ] ClientServerImplTest.MissingRequiredParameter
+133: [INFO] [2025-03-06 20:49:56] Server started: test-server v1.0.0
+133: [INFO] [2025-03-06 20:49:56] Client connected: test-client v1.0.0
+133: [INFO] [2025-03-06 20:49:56] Client initializing: test-client v1.0.0
+133: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:365: Failure
+133: Expected equality of these values:
+133:   get_future.wait_for(std::chrono::seconds(1))
+133:     Which is: 4-byte object <02-00 00-00>
+133:   std::future_status::ready
+133:     Which is: 4-byte object <00-00 00-00>
+133: 
+133: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:370: Failure
+133: Failed
+133: Expected an exception
+133: 
+133: [INFO] [2025-03-06 20:49:56] Client disconnected
+133: [INFO] [2025-03-06 20:49:56] Server stopped
+133: [  FAILED  ] ClientServerImplTest.MissingRequiredParameter (0 ms)
+133: [----------] 1 test from ClientServerImplTest (0 ms total)
+133: 
+133: [----------] Global test environment tear-down
+133: [==========] 1 test from 1 test suite ran. (0 ms total)
+133: [  PASSED  ] 0 tests.
+133: [  FAILED  ] 1 test, listed below:
+133: [  FAILED  ] ClientServerImplTest.MissingRequiredParameter
+133: 
+133:  1 FAILED TEST
+18/25 Test #133: ClientServerImplTest.MissingRequiredParameter .............***Failed    0.00 sec
+test 135
+      Start 135: ClientServerImplTest.ConcurrentToolCalls
+
+135: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=ClientServerImplTest.ConcurrentToolCalls" "--gtest_also_run_disabled_tests"
+135: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+135: Test timeout computed to be: 10000000
+135: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+135: Note: Google Test filter = ClientServerImplTest.ConcurrentToolCalls
+135: [==========] Running 1 test from 1 test suite.
+135: [----------] Global test environment set-up.
+135: [----------] 1 test from ClientServerImplTest
+135: [ RUN      ] ClientServerImplTest.ConcurrentToolCalls
+135: [INFO] [2025-03-06 20:49:56] Server started: test-server v1.0.0
+135: [INFO] [2025-03-06 20:49:56] Client connected: test-client v1.0.0
+135: [INFO] [2025-03-06 20:49:56] Client initializing: test-client v1.0.0
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: /home/c/dev/Neumann_Cyber/mcp-cpp/tests/unit/client_server_impl_tests.cpp:454: Failure
+135: Expected equality of these values:
+135:   futures[i].wait_for(std::chrono::seconds(1))
+135:     Which is: 4-byte object <02-00 00-00>
+135:   std::future_status::ready
+135:     Which is: 4-byte object <00-00 00-00>
+135: 
+135: [INFO] [2025-03-06 20:49:56] Client disconnected
+135: [INFO] [2025-03-06 20:49:56] Server stopped
+135: [  FAILED  ] ClientServerImplTest.ConcurrentToolCalls (0 ms)
+135: [----------] 1 test from ClientServerImplTest (0 ms total)
+135: 
+135: [----------] Global test environment tear-down
+135: [==========] 1 test from 1 test suite ran. (0 ms total)
+135: [  PASSED  ] 0 tests.
+135: [  FAILED  ] 1 test, listed below:
+135: [  FAILED  ] ClientServerImplTest.ConcurrentToolCalls
+135: 
+135:  1 FAILED TEST
+19/25 Test #135: ClientServerImplTest.ConcurrentToolCalls ..................***Failed    0.00 sec
+test 138
+      Start 138: IntegrationTest.BasicToolInvocation
+
+138: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=IntegrationTest.BasicToolInvocation" "--gtest_also_run_disabled_tests"
+138: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+138: Test timeout computed to be: 10000000
+138: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+138: Note: Google Test filter = IntegrationTest.BasicToolInvocation
+138: [==========] Running 1 test from 1 test suite.
+138: [----------] Global test environment set-up.
+138: [----------] 1 test from IntegrationTest
+138: [ RUN      ] IntegrationTest.BasicToolInvocation
+138: unknown file: Failure
+138: C++ exception with description "bad_weak_ptr" thrown in SetUp().
+138: 
+20/25 Test #138: IntegrationTest.BasicToolInvocation .......................***Exception: SegFault  0.10 sec
+test 139
+      Start 139: IntegrationTest.ResourceRetrieval
+
+139: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=IntegrationTest.ResourceRetrieval" "--gtest_also_run_disabled_tests"
+139: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+139: Test timeout computed to be: 10000000
+139: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+139: Note: Google Test filter = IntegrationTest.ResourceRetrieval
+139: [==========] Running 1 test from 1 test suite.
+139: [----------] Global test environment set-up.
+139: [----------] 1 test from IntegrationTest
+139: [ RUN      ] IntegrationTest.ResourceRetrieval
+139: unknown file: Failure
+139: C++ exception with description "bad_weak_ptr" thrown in SetUp().
+139: 
+21/25 Test #139: IntegrationTest.ResourceRetrieval .........................***Exception: SegFault  0.09 sec
+test 140
+      Start 140: IntegrationTest.PromptExecution
+
+140: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=IntegrationTest.PromptExecution" "--gtest_also_run_disabled_tests"
+140: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+140: Test timeout computed to be: 10000000
+140: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+140: Note: Google Test filter = IntegrationTest.PromptExecution
+140: [==========] Running 1 test from 1 test suite.
+140: [----------] Global test environment set-up.
+140: [----------] 1 test from IntegrationTest
+140: [ RUN      ] IntegrationTest.PromptExecution
+140: unknown file: Failure
+140: C++ exception with description "bad_weak_ptr" thrown in SetUp().
+140: 
+22/25 Test #140: IntegrationTest.PromptExecution ...........................***Exception: SegFault  0.09 sec
+test 141
+      Start 141: IntegrationTest.ListOperations
+
+141: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=IntegrationTest.ListOperations" "--gtest_also_run_disabled_tests"
+141: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+141: Test timeout computed to be: 10000000
+141: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+141: Note: Google Test filter = IntegrationTest.ListOperations
+141: [==========] Running 1 test from 1 test suite.
+141: [----------] Global test environment set-up.
+141: [----------] 1 test from IntegrationTest
+141: [ RUN      ] IntegrationTest.ListOperations
+141: unknown file: Failure
+141: C++ exception with description "bad_weak_ptr" thrown in SetUp().
+141: 
+23/25 Test #141: IntegrationTest.ListOperations ............................***Exception: SegFault  0.09 sec
+test 142
+      Start 142: IntegrationTest.ErrorConditions
+
+142: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=IntegrationTest.ErrorConditions" "--gtest_also_run_disabled_tests"
+142: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+142: Test timeout computed to be: 10000000
+142: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+142: Note: Google Test filter = IntegrationTest.ErrorConditions
+142: [==========] Running 1 test from 1 test suite.
+142: [----------] Global test environment set-up.
+142: [----------] 1 test from IntegrationTest
+142: [ RUN      ] IntegrationTest.ErrorConditions
+142: unknown file: Failure
+142: C++ exception with description "bad_weak_ptr" thrown in SetUp().
+142: 
+24/25 Test #142: IntegrationTest.ErrorConditions ...........................***Exception: SegFault  0.08 sec
+test 143
+      Start 143: IntegrationTest.ConcurrentOperations
+
+143: Test command: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests/mcp_tests "--gtest_filter=IntegrationTest.ConcurrentOperations" "--gtest_also_run_disabled_tests"
+143: Working Directory: /home/c/dev/Neumann_Cyber/mcp-cpp/build/tests
+143: Test timeout computed to be: 10000000
+143: Running main() from /home/c/dev/Neumann_Cyber/mcp-cpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+143: Note: Google Test filter = IntegrationTest.ConcurrentOperations
+143: [==========] Running 1 test from 1 test suite.
+143: [----------] Global test environment set-up.
+143: [----------] 1 test from IntegrationTest
+143: [ RUN      ] IntegrationTest.ConcurrentOperations
+143: unknown file: Failure
+143: C++ exception with description "bad_weak_ptr" thrown in SetUp().
+143: 
+25/25 Test #143: IntegrationTest.ConcurrentOperations ......................***Exception: SegFault  0.10 sec
+
+0% tests passed, 25 tests failed out of 25
+
+Total Test time (real) =   0.98 sec
+
+The following tests FAILED:
+	105 - AdvancedSessionTest.MessageStreamOrdering (Failed)
+	109 - AdvancedServerSessionTest.ErrorResponseHandling (Failed)
+	110 - AdvancedServerSessionTest.ServerNotificationSending (Failed)
+	111 - AdvancedServerSessionTest.ResourceRegistrationAndAccess (Subprocess aborted)
+	112 - AdvancedClientSessionTest.ToolDiscovery (Failed)
+	113 - AdvancedClientSessionTest.ToolInvocation (Failed)
+	114 - AdvancedClientSessionTest.PromptDiscoveryAndExecution (Failed)
+	116 - HttpSseTransportTest.SynchronousSend (Failed)
+	117 - HttpSseTransportTest.AsynchronousSend (Failed)
+	118 - HttpSseTransportTest.ConnectionFailure (Failed)
+	121 - HttpSseTransportTest.LargeMessage (Failed)
+	122 - HttpSseTransportTest.TimeoutHandling (Subprocess aborted)
+	123 - HttpSseTransportTest.ReconnectionLogic (Failed)
+	128 - ClientServerImplTest.ServerInitialization (Failed)
+	129 - ClientServerImplTest.ToolRegistrationAndInvocation (Failed)
+	130 - ClientServerImplTest.ResourceRegistrationAndRetrieval (Failed)
+	132 - ClientServerImplTest.ErrorHandling (Failed)
+	133 - ClientServerImplTest.MissingRequiredParameter (Failed)
+	135 - ClientServerImplTest.ConcurrentToolCalls (Failed)
+	138 - IntegrationTest.BasicToolInvocation (SEGFAULT)
+	139 - IntegrationTest.ResourceRetrieval (SEGFAULT)
+	140 - IntegrationTest.PromptExecution (SEGFAULT)
+	141 - IntegrationTest.ListOperations (SEGFAULT)
+	142 - IntegrationTest.ErrorConditions (SEGFAULT)
+	143 - IntegrationTest.ConcurrentOperations (SEGFAULT)
