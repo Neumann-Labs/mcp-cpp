@@ -1,68 +1,51 @@
 # mcp-cpp
 
-A C++ SDK for the Model Context Protocol (MCP). The SDK provides a framework for creating MCP servers and clients in C++ following modern C++17 best practices.
+A modern C++20 SDK for the [Model Context Protocol](https://modelcontextprotocol.io)
+(MCP), targeting protocol revision **2025-11-25**.
 
-## Features
+> **Status:** in active development. The API is not yet stable.
 
-- JSON-RPC 2.0 based messaging
-- Multiple transport mechanisms (STDIO, HTTP/SSE planned)
-- Support for MCP capabilities: Tools, Resources, and Prompts
-- Thread-safe design
-- Memory-safe implementation using RAII and smart pointers
-- Comprehensive error handling
+## Why
 
-## Building the Library
+LLM applications increasingly need a uniform way to talk to tool, resource, and
+prompt providers. MCP is that protocol; this SDK aims to be a clean, fast,
+spec-faithful C++ implementation suitable for embedding in editors, IDEs,
+agents, native applications, and high-throughput servers.
 
-The library uses CMake for building:
+Goals:
+
+- **Spec-faithful.** Field names, method names, and behaviors match the official
+  TypeScript schema verbatim.
+- **Idiomatic C++20.** RAII, value semantics, `std::variant` for sum types,
+  futures for async results, no inheritance hierarchies where composition will
+  do.
+- **Small surface, big leverage.** A focused public API; most of the work
+  happens behind a few well-named types.
+- **Production-ready.** Sanitizer-clean, thread-safe where it must be, no
+  hidden allocations on hot paths.
+
+## Building
 
 ```bash
-# Configure the build
-cmake -B build
-
-# Build the library
+cmake -B build -G Ninja
 cmake --build build
-
-# Run tests
-cd build && ctest
+ctest --test-dir build --output-on-failure
 ```
 
-## Examples
+### Useful build options
 
-### Echo Server/Client
+| Option                    | Default | Effect                                       |
+| ------------------------- | ------- | -------------------------------------------- |
+| `MCP_BUILD_TESTS`         | ON      | Build the GTest test suite.                  |
+| `MCP_BUILD_EXAMPLES`      | ON      | Build the example servers/clients.           |
+| `MCP_WARNINGS_AS_ERRORS`  | ON*     | Promote warnings to errors (top-level only). |
+| `MCP_USE_SYSTEM_DEPS`     | OFF     | `find_package` instead of `FetchContent`.    |
+| `MCP_ENABLE_ASAN`         | OFF     | `-fsanitize=address,undefined`.              |
+| `MCP_ENABLE_TSAN`         | OFF     | `-fsanitize=thread`.                         |
+| `MCP_ENABLE_COVERAGE`     | OFF     | `--coverage` for gcov/llvm-cov.              |
 
-The repository includes a simple echo server and client example that demonstrates the basic usage of the library.
-
-To run the echo server:
-
-```bash
-./build/examples/simple_server/echo_server
-```
-
-To run the echo client in a different terminal:
-
-```bash
-./build/examples/simple_client/echo_client
-```
-
-The client sends a test request and notification on startup and then allows you to enter messages that will be echoed back by the server.
-
-## Development Status
-
-The project is currently in development with the following components implemented:
-
-- Core types and JSON serialization
-- Error handling utilities
-- Transport interface
-- STDIO transport implementation
-- Logging utilities
-
-Upcoming features:
-
-- Session management
-- HTTP/SSE transport
-- Server implementation
-- Client implementation
+\* defaults to ON when this is the top-level project; OFF when consumed via `add_subdirectory`.
 
 ## License
 
-See the LICENSE file for details.
+Apache 2.0 — see [LICENSE](LICENSE).

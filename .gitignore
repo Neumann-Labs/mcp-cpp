@@ -45,3 +45,8 @@ Testing/
 *.exe
 *.out
 *.app
+build/
+build-asan/
+build-tsan/
+.cache/
+compile_commands.json
