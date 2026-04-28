@@ -16,6 +16,7 @@ target_sources(mcp_tests PRIVATE
     stdio_transport_test.cpp
     in_memory_transport.cpp
     session_test.cpp
+    server_client_integration_test.cpp
 )
 
 gtest_discover_tests(mcp_tests DISCOVERY_TIMEOUT 60)

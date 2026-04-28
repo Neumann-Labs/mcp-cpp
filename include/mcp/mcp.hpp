@@ -6,9 +6,11 @@
 
 #pragma once
 
+#include "mcp/client.hpp"
 #include "mcp/error.hpp"
 #include "mcp/log.hpp"
 #include "mcp/protocol.hpp"
+#include "mcp/server.hpp"
 #include "mcp/session.hpp"
 #include "mcp/stdio_transport.hpp"
 #include "mcp/transport.hpp"
