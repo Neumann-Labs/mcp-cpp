@@ -543,6 +543,99 @@ inline constexpr std::string_view method_prompts_get  = "prompts/get";
 inline constexpr std::string_view method_notifications_prompts_list_changed
     = "notifications/prompts/list_changed";
 
+// --------------------------------------------------------------------------
+// Cancellation
+// --------------------------------------------------------------------------
+
+struct CancelledNotificationParams {
+    std::optional<RequestId>   request_id;
+    std::optional<std::string> reason;
+};
+void to_json(nlohmann::json& j, const CancelledNotificationParams& p);
+void from_json(const nlohmann::json& j, CancelledNotificationParams& p);
+
+inline constexpr std::string_view method_notifications_cancelled
+    = "notifications/cancelled";
+
+// --------------------------------------------------------------------------
+// Progress
+// --------------------------------------------------------------------------
+
+/// Progress tokens are opaque values carried in `_meta.progressToken`
+/// on the originating request. The spec permits string or number; we
+/// normalise to a thin variant.
+class ProgressToken {
+public:
+    ProgressToken() : value_(std::int64_t{0}) {}
+    ProgressToken(std::string s)  : value_(std::move(s)) {}
+    ProgressToken(const char* s)  : value_(std::string{s}) {}
+    ProgressToken(std::int64_t i) : value_(i) {}
+    ProgressToken(int i)          : value_(static_cast<std::int64_t>(i)) {}
+
+    [[nodiscard]] bool is_string()  const noexcept { return value_.index() == 0; }
+    [[nodiscard]] bool is_integer() const noexcept { return value_.index() == 1; }
+
+    [[nodiscard]] const std::string& as_string() const { return std::get<0>(value_); }
+    [[nodiscard]] std::int64_t       as_integer() const { return std::get<1>(value_); }
+    [[nodiscard]] std::string        canonical() const;
+
+    friend bool operator==(const ProgressToken&, const ProgressToken&) = default;
+
+private:
+    std::variant<std::string, std::int64_t> value_;
+};
+void to_json(nlohmann::json& j, const ProgressToken& t);
+void from_json(const nlohmann::json& j, ProgressToken& t);
+
+struct ProgressNotificationParams {
+    ProgressToken              progress_token;
+    double                     progress;
+    std::optional<double>      total;
+    std::optional<std::string> message;
+};
+void to_json(nlohmann::json& j, const ProgressNotificationParams& p);
+void from_json(const nlohmann::json& j, ProgressNotificationParams& p);
+
+inline constexpr std::string_view method_notifications_progress
+    = "notifications/progress";
+
+// --------------------------------------------------------------------------
+// Logging (server → client log messages)
+// --------------------------------------------------------------------------
+
+/// Per-spec MCP log severity levels — this is the protocol-level
+/// "logging" capability, distinct from this library's internal
+/// LogLevel which writes to the host's stderr.
+enum class LoggingLevel {
+    debug, info, notice, warning, error, critical, alert, emergency,
+};
+[[nodiscard]] std::string_view to_string(LoggingLevel l) noexcept;
+void to_json(nlohmann::json& j, const LoggingLevel& l);
+void from_json(const nlohmann::json& j, LoggingLevel& l);
+
+struct SetLevelRequestParams {
+    LoggingLevel level;
+};
+void to_json(nlohmann::json& j, const SetLevelRequestParams& p);
+void from_json(const nlohmann::json& j, SetLevelRequestParams& p);
+
+struct LoggingMessageNotificationParams {
+    LoggingLevel               level;
+    std::optional<std::string> logger;  // optional name of the logger source
+    nlohmann::json             data;    // free-form payload (string/object/...)
+};
+void to_json(nlohmann::json& j, const LoggingMessageNotificationParams& p);
+void from_json(const nlohmann::json& j, LoggingMessageNotificationParams& p);
+
+inline constexpr std::string_view method_logging_set_level = "logging/setLevel";
+inline constexpr std::string_view method_notifications_message = "notifications/message";
+
+// --------------------------------------------------------------------------
+// Ping
+// --------------------------------------------------------------------------
+
+inline constexpr std::string_view method_ping = "ping";
+
 }  // namespace mcp
 
 // std::hash specialization so RequestId can key unordered containers.

@@ -108,6 +108,33 @@ public:
     /// Hook for inbound notifications/prompts/list_changed.
     void set_prompts_list_changed_handler(ListChangedHandler handler);
 
+    /// Send a `notifications/cancelled` for a previously-issued request.
+    /// Phase 2 does not yet integrate cancellation with the futures
+    /// returned by request methods — the caller must already know the
+    /// id (typically obtained via a future Phase 3 cancellation token).
+    void cancel_request(RequestId request_id,
+                        std::optional<std::string> reason = std::nullopt);
+
+    /// Send `ping` and wait for a response. Returns void on success;
+    /// the future throws on timeout / error.
+    [[nodiscard]] std::future<void> ping();
+
+    /// Send `logging/setLevel` to ask the server to change its
+    /// log-message threshold. The server may reject if it does not
+    /// support the logging capability.
+    [[nodiscard]] std::future<nlohmann::json>
+    set_log_level(LoggingLevel level);
+
+    /// Hook for inbound `notifications/message` (server-emitted log).
+    using LogMessageHandler =
+        std::function<void(const LoggingMessageNotificationParams&)>;
+    void set_log_message_handler(LogMessageHandler handler);
+
+    /// Hook for inbound `notifications/progress`.
+    using ProgressHandler =
+        std::function<void(const ProgressNotificationParams&)>;
+    void set_progress_handler(ProgressHandler handler);
+
     /// True between connect() and disconnect().
     [[nodiscard]] bool is_connected() const noexcept;
 

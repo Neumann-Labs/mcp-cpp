@@ -800,4 +800,112 @@ void from_json(const nlohmann::json& j, GetPromptResult& r) {
     r.messages = j.at("messages").get<std::vector<PromptMessage>>();
 }
 
+// =====================================================================
+// Cancellation
+// =====================================================================
+
+void to_json(nlohmann::json& j, const CancelledNotificationParams& p) {
+    j = nlohmann::json::object();
+    if (p.request_id.has_value()) j["requestId"] = *p.request_id;
+    put_optional(j, "reason", p.reason);
+}
+
+void from_json(const nlohmann::json& j, CancelledNotificationParams& p) {
+    if (auto it = j.find("requestId"); it != j.end() && !it->is_null()) {
+        p.request_id = it->get<RequestId>();
+    }
+    take_optional(j, "reason", p.reason);
+}
+
+// =====================================================================
+// Progress
+// =====================================================================
+
+std::string ProgressToken::canonical() const {
+    return is_string() ? "s:" + as_string()
+                       : "i:" + std::to_string(as_integer());
+}
+
+void to_json(nlohmann::json& j, const ProgressToken& t) {
+    if (t.is_string()) j = t.as_string();
+    else                j = t.as_integer();
+}
+void from_json(const nlohmann::json& j, ProgressToken& t) {
+    if (j.is_string())              t = ProgressToken{j.get<std::string>()};
+    else if (j.is_number_integer()) t = ProgressToken{j.get<std::int64_t>()};
+    else throw Error(error_code::parse_error,
+                     "progressToken must be a string or integer");
+}
+
+void to_json(nlohmann::json& j, const ProgressNotificationParams& p) {
+    j = nlohmann::json::object();
+    j["progressToken"] = p.progress_token;
+    j["progress"]      = p.progress;
+    put_optional(j, "total",   p.total);
+    put_optional(j, "message", p.message);
+}
+void from_json(const nlohmann::json& j, ProgressNotificationParams& p) {
+    p.progress_token = j.at("progressToken").get<ProgressToken>();
+    p.progress       = j.at("progress").get<double>();
+    take_optional(j, "total",   p.total);
+    take_optional(j, "message", p.message);
+}
+
+// =====================================================================
+// Logging (protocol-level)
+// =====================================================================
+
+std::string_view to_string(LoggingLevel l) noexcept {
+    switch (l) {
+        case LoggingLevel::debug:     return "debug";
+        case LoggingLevel::info:      return "info";
+        case LoggingLevel::notice:    return "notice";
+        case LoggingLevel::warning:   return "warning";
+        case LoggingLevel::error:     return "error";
+        case LoggingLevel::critical:  return "critical";
+        case LoggingLevel::alert:     return "alert";
+        case LoggingLevel::emergency: return "emergency";
+    }
+    return "?";
+}
+
+namespace {
+LoggingLevel logging_level_from_string(std::string_view s) {
+    if (s == "debug")     return LoggingLevel::debug;
+    if (s == "info")      return LoggingLevel::info;
+    if (s == "notice")    return LoggingLevel::notice;
+    if (s == "warning")   return LoggingLevel::warning;
+    if (s == "error")     return LoggingLevel::error;
+    if (s == "critical")  return LoggingLevel::critical;
+    if (s == "alert")     return LoggingLevel::alert;
+    if (s == "emergency") return LoggingLevel::emergency;
+    throw Error(error_code::parse_error,
+                std::string{"unknown logging level: "} + std::string{s});
+}
+}  // namespace
+
+void to_json(nlohmann::json& j, const LoggingLevel& l)   { j = std::string{to_string(l)}; }
+void from_json(const nlohmann::json& j, LoggingLevel& l) {
+    l = logging_level_from_string(j.get<std::string>());
+}
+
+void to_json(nlohmann::json& j, const SetLevelRequestParams& p) {
+    j = nlohmann::json{{"level", p.level}};
+}
+void from_json(const nlohmann::json& j, SetLevelRequestParams& p) {
+    p.level = j.at("level").get<LoggingLevel>();
+}
+
+void to_json(nlohmann::json& j, const LoggingMessageNotificationParams& p) {
+    j = nlohmann::json::object();
+    j["level"] = p.level;
+    j["data"]  = p.data;
+    put_optional(j, "logger", p.logger);
+}
+void from_json(const nlohmann::json& j, LoggingMessageNotificationParams& p) {
+    p.level = j.at("level").get<LoggingLevel>();
+    p.data  = j.at("data");
+    take_optional(j, "logger", p.logger);
+}
+
 }  // namespace mcp

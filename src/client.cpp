@@ -245,4 +245,60 @@ void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
     }
 }
 
+// =====================================================================
+// Cancellation, ping, log, progress
+// =====================================================================
+
+void Client::cancel_request(RequestId request_id,
+                            std::optional<std::string> reason) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    CancelledNotificationParams params{
+        .request_id = std::move(request_id),
+        .reason     = std::move(reason),
+    };
+    (void)session_->send_notification(
+        std::string{method_notifications_cancelled},
+        nlohmann::json(params));
+}
+
+std::future<void> Client::ping() {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto inner = session_->send_request(std::string{method_ping}, nullptr);
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable {
+            (void)inner.get();
+        });
+}
+
+std::future<nlohmann::json> Client::set_log_level(LoggingLevel level) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    SetLevelRequestParams params{.level = level};
+    return session_->send_request(std::string{method_logging_set_level},
+                                  nlohmann::json(params));
+}
+
+void Client::set_log_message_handler(LogMessageHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    if (handler) {
+        session_->set_notification_handler(
+            std::string{method_notifications_message},
+            [h = std::move(handler)](const nlohmann::json& params) {
+                if (params.is_null()) return;
+                h(params.get<LoggingMessageNotificationParams>());
+            });
+    }
+}
+
+void Client::set_progress_handler(ProgressHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    if (handler) {
+        session_->set_notification_handler(
+            std::string{method_notifications_progress},
+            [h = std::move(handler)](const nlohmann::json& params) {
+                if (params.is_null()) return;
+                h(params.get<ProgressNotificationParams>());
+            });
+    }
+}
+
 }  // namespace mcp

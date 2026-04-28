@@ -71,6 +71,46 @@ Server& Server::prompt(Prompt descriptor, PromptGetHandler handler) {
     return *this;
 }
 
+Server& Server::enable_logging(LoggingLevel initial_level) {
+    logging_enabled_.store(true, std::memory_order_release);
+    log_level_.store(initial_level, std::memory_order_release);
+    return *this;
+}
+
+bool Server::log(LoggingLevel               level,
+                 nlohmann::json             data,
+                 std::optional<std::string> logger) {
+    if (!logging_enabled_.load(std::memory_order_acquire)) return false;
+    if (static_cast<int>(level) <
+        static_cast<int>(log_level_.load(std::memory_order_acquire))) return false;
+    if (!session_) return false;
+    LoggingMessageNotificationParams params{
+        .level  = level,
+        .logger = std::move(logger),
+        .data   = std::move(data),
+    };
+    auto ec = session_->send_notification(
+        std::string{method_notifications_message},
+        nlohmann::json(params));
+    return !ec;
+}
+
+void Server::report_progress(const ProgressToken&        token,
+                             double                      progress,
+                             std::optional<double>       total,
+                             std::optional<std::string>  message) {
+    if (!session_) return;
+    ProgressNotificationParams params{
+        .progress_token = token,
+        .progress       = progress,
+        .total          = total,
+        .message        = std::move(message),
+    };
+    (void)session_->send_notification(
+        std::string{method_notifications_progress},
+        nlohmann::json(params));
+}
+
 // =====================================================================
 // Handlers
 // =====================================================================
@@ -112,6 +152,9 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
     {
         std::lock_guard<std::mutex> lk(prompts_mu_);
         if (!prompts_.empty()) result.capabilities.prompts = PromptsCapability{};
+    }
+    if (logging_enabled_.load(std::memory_order_acquire)) {
+        result.capabilities.logging = nlohmann::json::object();
     }
 
     initialized_.store(true, std::memory_order_release);
@@ -261,6 +304,41 @@ nlohmann::json Server::handle_get_prompt(const nlohmann::json& params) {
     return h(args);
 }
 
+nlohmann::json Server::handle_ping(const nlohmann::json& /*params*/) {
+    return nlohmann::json::object();
+}
+
+nlohmann::json Server::handle_set_level(const nlohmann::json& params) {
+    if (!logging_enabled_.load(std::memory_order_acquire)) {
+        throw Error{error_code::method_not_found,
+                    "logging capability is not enabled"};
+    }
+    SetLevelRequestParams parsed;
+    try {
+        parsed = params.get<SetLevelRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid logging/setLevel: "} + e.what()};
+    }
+    log_level_.store(parsed.level, std::memory_order_release);
+    return nlohmann::json::object();
+}
+
+void Server::handle_cancelled(const nlohmann::json& params) {
+    // The Server cannot abort an in-flight handler in Phase 2; we log
+    // the cancellation so users know it arrived. Phase 3 will plumb a
+    // cancellation token through to ToolHandler etc.
+    try {
+        auto p = params.get<CancelledNotificationParams>();
+        if (p.request_id.has_value()) {
+            MCP_LOG_INFO("client cancelled request id=" + p.request_id->canonical()
+                         + (p.reason ? (" reason=" + *p.reason) : ""));
+        }
+    } catch (...) {
+        MCP_LOG_WARN("malformed notifications/cancelled payload");
+    }
+}
+
 // =====================================================================
 // Lifecycle
 // =====================================================================
@@ -290,6 +368,13 @@ void Server::run(std::unique_ptr<Transport> transport) {
         [this](const nlohmann::json& p) { return handle_list_prompts(p); });
     session_->set_request_handler(std::string{method_prompts_get},
         [this](const nlohmann::json& p) { return handle_get_prompt(p); });
+    session_->set_request_handler(std::string{method_ping},
+        [this](const nlohmann::json& p) { return handle_ping(p); });
+    session_->set_request_handler(std::string{method_logging_set_level},
+        [this](const nlohmann::json& p) { return handle_set_level(p); });
+
+    session_->set_notification_handler(std::string{method_notifications_cancelled},
+        [this](const nlohmann::json& p) { handle_cancelled(p); });
 
     session_->set_notification_handler(std::string{method_notifications_initialized},
         [](const nlohmann::json&) {

@@ -102,6 +102,28 @@ public:
     Server& prompt(Prompt           descriptor,
                    PromptGetHandler handler);
 
+    /// Enable the protocol-level "logging" capability. After
+    /// initialization, the server may emit log messages to the client
+    /// via `log()`, and the client may adjust the level via
+    /// `logging/setLevel`. The level filter is applied server-side
+    /// before each emission.
+    Server& enable_logging(LoggingLevel initial_level = LoggingLevel::info);
+
+    /// Emit a `notifications/message` log entry to the client. Dropped
+    /// if logging is not enabled or `level` is below the negotiated
+    /// minimum. `data` is free-form JSON (typically a string or
+    /// object). Returns `true` if the notification was sent.
+    bool log(LoggingLevel               level,
+             nlohmann::json             data,
+             std::optional<std::string> logger = std::nullopt);
+
+    /// Emit a `notifications/progress` for the given progress token.
+    /// `total` and `message` are optional per spec.
+    void report_progress(const ProgressToken&        token,
+                         double                      progress,
+                         std::optional<double>       total   = std::nullopt,
+                         std::optional<std::string>  message = std::nullopt);
+
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
     /// called or the transport closes.
@@ -127,6 +149,9 @@ private:
     nlohmann::json handle_read_resource(const nlohmann::json& params);
     nlohmann::json handle_list_prompts(const nlohmann::json& params);
     nlohmann::json handle_get_prompt(const nlohmann::json& params);
+    nlohmann::json handle_ping(const nlohmann::json& params);
+    nlohmann::json handle_set_level(const nlohmann::json& params);
+    void           handle_cancelled(const nlohmann::json& params);
 
     struct ToolEntry {
         Tool        descriptor;
@@ -153,6 +178,9 @@ private:
     };
     std::unordered_map<std::string, PromptEntry>   prompts_;
     std::mutex                                     prompts_mu_;
+
+    std::atomic<bool>                              logging_enabled_{false};
+    std::atomic<LoggingLevel>                      log_level_{LoggingLevel::info};
 
     std::unique_ptr<Session>                    session_;
     std::atomic<bool>                           initialized_{false};
