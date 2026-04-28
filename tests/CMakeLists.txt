@@ -12,6 +12,7 @@ target_compile_options(mcp_tests PRIVATE
 target_sources(mcp_tests PRIVATE
     log_test.cpp
     error_test.cpp
+    protocol_test.cpp
 )
 
 gtest_discover_tests(mcp_tests DISCOVERY_TIMEOUT 60)
