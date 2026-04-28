@@ -61,6 +61,40 @@ public:
     [[nodiscard]] std::future<CallToolResult>
     call_tool(std::string name, nlohmann::json arguments = nullptr);
 
+    /// `resources/list`. Cursor optional; pagination support is
+    /// callee-side for Phase 2.
+    [[nodiscard]] std::future<ListResourcesResult>
+    list_resources(std::optional<std::string> cursor = std::nullopt);
+
+    /// `resources/templates/list`.
+    [[nodiscard]] std::future<ListResourceTemplatesResult>
+    list_resource_templates(std::optional<std::string> cursor = std::nullopt);
+
+    /// `resources/read` for the given URI.
+    [[nodiscard]] std::future<ReadResourceResult>
+    read_resource(std::string uri);
+
+    /// `resources/subscribe` — request `notifications/resources/updated`
+    /// frames whenever this URI's contents change. Subscribe handlers
+    /// for incoming updates: see `set_resource_updated_handler`.
+    [[nodiscard]] std::future<nlohmann::json>
+    subscribe(std::string uri);
+
+    /// `resources/unsubscribe`.
+    [[nodiscard]] std::future<nlohmann::json>
+    unsubscribe(std::string uri);
+
+    /// Register a handler for inbound resource-update notifications.
+    /// The handler is called whenever the server sends
+    /// `notifications/resources/updated`.
+    using ResourceUpdatedHandler =
+        std::function<void(const ResourceUpdatedNotificationParams&)>;
+    void set_resource_updated_handler(ResourceUpdatedHandler handler);
+
+    /// Register a handler for inbound resource-list-changed notifications.
+    using ListChangedHandler = std::function<void()>;
+    void set_resources_list_changed_handler(ListChangedHandler handler);
+
     /// True between connect() and disconnect().
     [[nodiscard]] bool is_connected() const noexcept;
 

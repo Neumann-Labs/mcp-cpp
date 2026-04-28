@@ -418,15 +418,132 @@ void from_json(const nlohmann::json& j, AudioContent& c) {
     take_optional(j, "annotations", c.annotations);
 }
 
+// =====================================================================
+// Resources
+// =====================================================================
+
+void to_json(nlohmann::json& j, const TextResourceContents& c) {
+    j = nlohmann::json::object();
+    j["uri"]  = c.uri;
+    j["text"] = c.text;
+    put_optional(j, "mimeType", c.mime_type);
+}
+
+void from_json(const nlohmann::json& j, TextResourceContents& c) {
+    c.uri  = require<std::string>(j, "uri");
+    c.text = require<std::string>(j, "text");
+    take_optional(j, "mimeType", c.mime_type);
+}
+
+void to_json(nlohmann::json& j, const BlobResourceContents& c) {
+    j = nlohmann::json::object();
+    j["uri"]  = c.uri;
+    j["blob"] = c.blob;
+    put_optional(j, "mimeType", c.mime_type);
+}
+
+void from_json(const nlohmann::json& j, BlobResourceContents& c) {
+    c.uri  = require<std::string>(j, "uri");
+    c.blob = require<std::string>(j, "blob");
+    take_optional(j, "mimeType", c.mime_type);
+}
+
+void to_json(nlohmann::json& j, const ResourceContents& c) {
+    std::visit([&j](const auto& v) { j = v; }, c);
+}
+
+void from_json(const nlohmann::json& j, ResourceContents& c) {
+    if (j.contains("text")) { c = j.get<TextResourceContents>(); return; }
+    if (j.contains("blob")) { c = j.get<BlobResourceContents>(); return; }
+    throw Error(error_code::parse_error,
+                "ResourceContents must have either \"text\" or \"blob\"");
+}
+
+void to_json(nlohmann::json& j, const Resource& r) {
+    j = nlohmann::json::object();
+    j["uri"]  = r.uri;
+    j["name"] = r.name;
+    put_optional(j, "title",       r.title);
+    put_optional(j, "description", r.description);
+    put_optional(j, "mimeType",    r.mime_type);
+    put_optional(j, "annotations", r.annotations);
+    put_optional(j, "size",        r.size);
+}
+
+void from_json(const nlohmann::json& j, Resource& r) {
+    r.uri  = require<std::string>(j, "uri");
+    r.name = require<std::string>(j, "name");
+    take_optional(j, "title",       r.title);
+    take_optional(j, "description", r.description);
+    take_optional(j, "mimeType",    r.mime_type);
+    take_optional(j, "annotations", r.annotations);
+    take_optional(j, "size",        r.size);
+}
+
+void to_json(nlohmann::json& j, const ResourceTemplate& r) {
+    j = nlohmann::json::object();
+    j["uriTemplate"] = r.uri_template;
+    j["name"]        = r.name;
+    put_optional(j, "title",       r.title);
+    put_optional(j, "description", r.description);
+    put_optional(j, "mimeType",    r.mime_type);
+    put_optional(j, "annotations", r.annotations);
+}
+
+void from_json(const nlohmann::json& j, ResourceTemplate& r) {
+    r.uri_template = require<std::string>(j, "uriTemplate");
+    r.name         = require<std::string>(j, "name");
+    take_optional(j, "title",       r.title);
+    take_optional(j, "description", r.description);
+    take_optional(j, "mimeType",    r.mime_type);
+    take_optional(j, "annotations", r.annotations);
+}
+
+void to_json(nlohmann::json& j, const ResourceLink& r) {
+    j = nlohmann::json::object();
+    j["type"] = "resource_link";
+    j["uri"]  = r.uri;
+    j["name"] = r.name;
+    put_optional(j, "title",       r.title);
+    put_optional(j, "description", r.description);
+    put_optional(j, "mimeType",    r.mime_type);
+    put_optional(j, "annotations", r.annotations);
+    put_optional(j, "size",        r.size);
+}
+
+void from_json(const nlohmann::json& j, ResourceLink& r) {
+    r.uri  = require<std::string>(j, "uri");
+    r.name = require<std::string>(j, "name");
+    take_optional(j, "title",       r.title);
+    take_optional(j, "description", r.description);
+    take_optional(j, "mimeType",    r.mime_type);
+    take_optional(j, "annotations", r.annotations);
+    take_optional(j, "size",        r.size);
+}
+
+void to_json(nlohmann::json& j, const EmbeddedResource& r) {
+    j = nlohmann::json::object();
+    j["type"]     = "resource";
+    j["resource"] = r.resource;
+    put_optional(j, "annotations", r.annotations);
+}
+
+void from_json(const nlohmann::json& j, EmbeddedResource& r) {
+    r.resource = j.at("resource").get<ResourceContents>();
+    take_optional(j, "annotations", r.annotations);
+}
+
 void to_json(nlohmann::json& j, const ContentBlock& c) {
     std::visit([&j](const auto& v) { j = v; }, c);
 }
 
 void from_json(const nlohmann::json& j, ContentBlock& c) {
     const auto t = require<std::string>(j, "type");
-    if (t == "text")  { c = j.get<TextContent>();  return; }
-    if (t == "image") { c = j.get<ImageContent>(); return; }
-    if (t == "audio") { c = j.get<AudioContent>(); return; }
+    if (t == "text")          { c = j.get<TextContent>();      return; }
+    if (t == "image")         { c = j.get<ImageContent>();     return; }
+    if (t == "audio")         { c = j.get<AudioContent>();     return; }
+    if (t == "resource_link") { c = j.get<ResourceLink>();     return; }
+    if (t == "resource")      { c = j.get<EmbeddedResource>(); return; }
     throw Error(error_code::parse_error,
                 std::string{"unknown content block type: "} + t);
 }
@@ -513,6 +630,82 @@ void from_json(const nlohmann::json& j, CallToolResult& r) {
     r.content = j.at("content").get<std::vector<ContentBlock>>();
     take_optional_json(j, "structuredContent", r.structured_content);
     take_optional      (j, "isError",           r.is_error);
+}
+
+// =====================================================================
+// Resource requests / responses
+// =====================================================================
+
+void to_json(nlohmann::json& j, const ListResourcesRequestParams& p) {
+    j = nlohmann::json::object();
+    put_optional(j, "cursor", p.cursor);
+}
+void from_json(const nlohmann::json& j, ListResourcesRequestParams& p) {
+    take_optional(j, "cursor", p.cursor);
+}
+
+void to_json(nlohmann::json& j, const ListResourcesResult& r) {
+    j = nlohmann::json::object();
+    j["resources"] = r.resources;
+    put_optional(j, "nextCursor", r.next_cursor);
+}
+void from_json(const nlohmann::json& j, ListResourcesResult& r) {
+    r.resources = j.at("resources").get<std::vector<Resource>>();
+    take_optional(j, "nextCursor", r.next_cursor);
+}
+
+void to_json(nlohmann::json& j, const ListResourceTemplatesRequestParams& p) {
+    j = nlohmann::json::object();
+    put_optional(j, "cursor", p.cursor);
+}
+void from_json(const nlohmann::json& j, ListResourceTemplatesRequestParams& p) {
+    take_optional(j, "cursor", p.cursor);
+}
+
+void to_json(nlohmann::json& j, const ListResourceTemplatesResult& r) {
+    j = nlohmann::json::object();
+    j["resourceTemplates"] = r.resource_templates;
+    put_optional(j, "nextCursor", r.next_cursor);
+}
+void from_json(const nlohmann::json& j, ListResourceTemplatesResult& r) {
+    r.resource_templates = j.at("resourceTemplates").get<std::vector<ResourceTemplate>>();
+    take_optional(j, "nextCursor", r.next_cursor);
+}
+
+void to_json(nlohmann::json& j, const ReadResourceRequestParams& p) {
+    j = nlohmann::json{{"uri", p.uri}};
+}
+void from_json(const nlohmann::json& j, ReadResourceRequestParams& p) {
+    p.uri = require<std::string>(j, "uri");
+}
+
+void to_json(nlohmann::json& j, const ReadResourceResult& r) {
+    j = nlohmann::json::object();
+    j["contents"] = r.contents;
+}
+void from_json(const nlohmann::json& j, ReadResourceResult& r) {
+    r.contents = j.at("contents").get<std::vector<ResourceContents>>();
+}
+
+void to_json(nlohmann::json& j, const SubscribeRequestParams& p) {
+    j = nlohmann::json{{"uri", p.uri}};
+}
+void from_json(const nlohmann::json& j, SubscribeRequestParams& p) {
+    p.uri = require<std::string>(j, "uri");
+}
+
+void to_json(nlohmann::json& j, const UnsubscribeRequestParams& p) {
+    j = nlohmann::json{{"uri", p.uri}};
+}
+void from_json(const nlohmann::json& j, UnsubscribeRequestParams& p) {
+    p.uri = require<std::string>(j, "uri");
+}
+
+void to_json(nlohmann::json& j, const ResourceUpdatedNotificationParams& p) {
+    j = nlohmann::json{{"uri", p.uri}};
+}
+void from_json(const nlohmann::json& j, ResourceUpdatedNotificationParams& p) {
+    p.uri = require<std::string>(j, "uri");
 }
 
 }  // namespace mcp

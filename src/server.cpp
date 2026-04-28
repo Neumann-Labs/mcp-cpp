@@ -45,6 +45,25 @@ Server& Server::tool(std::string                    name,
     return *this;
 }
 
+Server& Server::resource(Resource descriptor, ResourceReadHandler handler) {
+    std::lock_guard<std::mutex> lk(resources_mu_);
+    const std::string uri = descriptor.uri;
+    resources_[uri] = ResourceEntry{std::move(descriptor), std::move(handler)};
+    return *this;
+}
+
+Server& Server::resource_template(ResourceTemplate descriptor) {
+    std::lock_guard<std::mutex> lk(resources_mu_);
+    resource_templates_.push_back(std::move(descriptor));
+    return *this;
+}
+
+Server& Server::fallback_resource_handler(ResourceReadHandler handler) {
+    std::lock_guard<std::mutex> lk(resources_mu_);
+    fallback_resource_handler_ = std::move(handler);
+    return *this;
+}
+
 // =====================================================================
 // Handlers
 // =====================================================================
@@ -69,10 +88,19 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
     result.server_info      = server_info_;
     result.instructions     = instructions_;
 
-    // Capabilities: we offer "tools" iff at least one tool is registered.
-    std::lock_guard<std::mutex> lk(tools_mu_);
-    if (!tools_.empty()) {
-        result.capabilities.tools = ToolsCapability{};
+    // Capabilities: we offer each capability iff something is registered
+    // for it. listChanged is unset because we don't yet emit those
+    // notifications (Phase 3).
+    {
+        std::lock_guard<std::mutex> lk(tools_mu_);
+        if (!tools_.empty()) result.capabilities.tools = ToolsCapability{};
+    }
+    {
+        std::lock_guard<std::mutex> lk(resources_mu_);
+        if (!resources_.empty() || !resource_templates_.empty() ||
+            fallback_resource_handler_) {
+            result.capabilities.resources = ResourcesCapability{};
+        }
     }
 
     initialized_.store(true, std::memory_order_release);
@@ -123,6 +151,64 @@ nlohmann::json Server::handle_call_tool(const nlohmann::json& params) {
     return result;
 }
 
+nlohmann::json Server::handle_list_resources(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    (void)params;  // pagination cursor ignored in Phase 2
+
+    ListResourcesResult res;
+    {
+        std::lock_guard<std::mutex> lk(resources_mu_);
+        res.resources.reserve(resources_.size());
+        for (const auto& [uri, entry] : resources_) res.resources.push_back(entry.descriptor);
+    }
+    return res;
+}
+
+nlohmann::json Server::handle_list_resource_templates(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    (void)params;
+
+    ListResourceTemplatesResult res;
+    {
+        std::lock_guard<std::mutex> lk(resources_mu_);
+        res.resource_templates = resource_templates_;
+    }
+    return res;
+}
+
+nlohmann::json Server::handle_read_resource(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    ReadResourceRequestParams parsed;
+    try {
+        parsed = params.get<ReadResourceRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid resources/read params: "} + e.what()};
+    }
+
+    ResourceReadHandler h;
+    {
+        std::lock_guard<std::mutex> lk(resources_mu_);
+        auto it = resources_.find(parsed.uri);
+        if (it != resources_.end()) {
+            h = it->second.handler;
+        } else {
+            h = fallback_resource_handler_;
+        }
+    }
+    if (!h) {
+        throw Error{error_code::method_not_found,
+                    "resource not found: " + parsed.uri};
+    }
+    return h(parsed.uri);
+}
+
 // =====================================================================
 // Lifecycle
 // =====================================================================
@@ -142,6 +228,12 @@ void Server::run(std::unique_ptr<Transport> transport) {
         [this](const nlohmann::json& p) { return handle_list_tools(p); });
     session_->set_request_handler(std::string{method_tools_call},
         [this](const nlohmann::json& p) { return handle_call_tool(p); });
+    session_->set_request_handler(std::string{method_resources_list},
+        [this](const nlohmann::json& p) { return handle_list_resources(p); });
+    session_->set_request_handler(std::string{method_resources_templates_list},
+        [this](const nlohmann::json& p) { return handle_list_resource_templates(p); });
+    session_->set_request_handler(std::string{method_resources_read},
+        [this](const nlohmann::json& p) { return handle_read_resource(p); });
 
     session_->set_notification_handler(std::string{method_notifications_initialized},
         [](const nlohmann::json&) {

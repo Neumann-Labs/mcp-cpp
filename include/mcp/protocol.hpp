@@ -272,9 +272,85 @@ struct AudioContent {
 void to_json(nlohmann::json& j, const AudioContent& c);
 void from_json(const nlohmann::json& j, AudioContent& c);
 
-/// Content blocks used by tools/calls and prompts. The `ResourceLink` and
-/// `EmbeddedResource` variants are added in Phase 2 alongside resources.
-using ContentBlock = std::variant<TextContent, ImageContent, AudioContent>;
+// --------------------------------------------------------------------------
+// Resources (must come before ContentBlock; ResourceLink and
+// EmbeddedResource are content variants that reference resource shapes)
+// --------------------------------------------------------------------------
+
+struct TextResourceContents {
+    std::string                uri;
+    std::optional<std::string> mime_type;
+    std::string                text;
+};
+void to_json(nlohmann::json& j, const TextResourceContents& c);
+void from_json(const nlohmann::json& j, TextResourceContents& c);
+
+struct BlobResourceContents {
+    std::string                uri;
+    std::optional<std::string> mime_type;
+    std::string                blob;  // base64
+};
+void to_json(nlohmann::json& j, const BlobResourceContents& c);
+void from_json(const nlohmann::json& j, BlobResourceContents& c);
+
+/// Resource contents carry either text or a base64 blob; on the wire
+/// the discriminator is which member ("text" or "blob") is present.
+using ResourceContents = std::variant<TextResourceContents,
+                                      BlobResourceContents>;
+
+void to_json(nlohmann::json& j, const ResourceContents& c);
+void from_json(const nlohmann::json& j, ResourceContents& c);
+
+struct Resource {
+    std::string                 uri;
+    std::string                 name;
+    std::optional<std::string>  title;
+    std::optional<std::string>  description;
+    std::optional<std::string>  mime_type;
+    std::optional<Annotations>  annotations;
+    std::optional<std::int64_t> size;  // bytes
+};
+void to_json(nlohmann::json& j, const Resource& r);
+void from_json(const nlohmann::json& j, Resource& r);
+
+struct ResourceTemplate {
+    std::string                uri_template;
+    std::string                name;
+    std::optional<std::string> title;
+    std::optional<std::string> description;
+    std::optional<std::string> mime_type;
+    std::optional<Annotations> annotations;
+};
+void to_json(nlohmann::json& j, const ResourceTemplate& r);
+void from_json(const nlohmann::json& j, ResourceTemplate& r);
+
+struct ResourceLink {
+    std::string                 uri;
+    std::string                 name;
+    std::optional<std::string>  title;
+    std::optional<std::string>  description;
+    std::optional<std::string>  mime_type;
+    std::optional<Annotations>  annotations;
+    std::optional<std::int64_t> size;
+};
+void to_json(nlohmann::json& j, const ResourceLink& r);
+void from_json(const nlohmann::json& j, ResourceLink& r);
+
+struct EmbeddedResource {
+    ResourceContents           resource;
+    std::optional<Annotations> annotations;
+};
+void to_json(nlohmann::json& j, const EmbeddedResource& r);
+void from_json(const nlohmann::json& j, EmbeddedResource& r);
+
+/// Content blocks used by tools/calls, prompts, and sampling. The
+/// type discriminator on the wire is `"text" | "image" | "audio"
+/// | "resource_link" | "resource"`.
+using ContentBlock = std::variant<TextContent,
+                                  ImageContent,
+                                  AudioContent,
+                                  ResourceLink,
+                                  EmbeddedResource>;
 
 void to_json(nlohmann::json& j, const ContentBlock& c);
 void from_json(const nlohmann::json& j, ContentBlock& c);
@@ -334,6 +410,76 @@ void from_json(const nlohmann::json& j, CallToolResult& r);
 
 inline constexpr std::string_view method_tools_list = "tools/list";
 inline constexpr std::string_view method_tools_call = "tools/call";
+
+// --------------------------------------------------------------------------
+// Resource requests / responses
+// --------------------------------------------------------------------------
+
+struct ListResourcesRequestParams {
+    std::optional<std::string> cursor;
+};
+void to_json(nlohmann::json& j, const ListResourcesRequestParams& p);
+void from_json(const nlohmann::json& j, ListResourcesRequestParams& p);
+
+struct ListResourcesResult {
+    std::vector<Resource>      resources;
+    std::optional<std::string> next_cursor;
+};
+void to_json(nlohmann::json& j, const ListResourcesResult& r);
+void from_json(const nlohmann::json& j, ListResourcesResult& r);
+
+struct ListResourceTemplatesRequestParams {
+    std::optional<std::string> cursor;
+};
+void to_json(nlohmann::json& j, const ListResourceTemplatesRequestParams& p);
+void from_json(const nlohmann::json& j, ListResourceTemplatesRequestParams& p);
+
+struct ListResourceTemplatesResult {
+    std::vector<ResourceTemplate> resource_templates;
+    std::optional<std::string>    next_cursor;
+};
+void to_json(nlohmann::json& j, const ListResourceTemplatesResult& r);
+void from_json(const nlohmann::json& j, ListResourceTemplatesResult& r);
+
+struct ReadResourceRequestParams {
+    std::string uri;
+};
+void to_json(nlohmann::json& j, const ReadResourceRequestParams& p);
+void from_json(const nlohmann::json& j, ReadResourceRequestParams& p);
+
+struct ReadResourceResult {
+    std::vector<ResourceContents> contents;
+};
+void to_json(nlohmann::json& j, const ReadResourceResult& r);
+void from_json(const nlohmann::json& j, ReadResourceResult& r);
+
+struct SubscribeRequestParams {
+    std::string uri;
+};
+void to_json(nlohmann::json& j, const SubscribeRequestParams& p);
+void from_json(const nlohmann::json& j, SubscribeRequestParams& p);
+
+struct UnsubscribeRequestParams {
+    std::string uri;
+};
+void to_json(nlohmann::json& j, const UnsubscribeRequestParams& p);
+void from_json(const nlohmann::json& j, UnsubscribeRequestParams& p);
+
+struct ResourceUpdatedNotificationParams {
+    std::string uri;
+};
+void to_json(nlohmann::json& j, const ResourceUpdatedNotificationParams& p);
+void from_json(const nlohmann::json& j, ResourceUpdatedNotificationParams& p);
+
+inline constexpr std::string_view method_resources_list           = "resources/list";
+inline constexpr std::string_view method_resources_templates_list = "resources/templates/list";
+inline constexpr std::string_view method_resources_read           = "resources/read";
+inline constexpr std::string_view method_resources_subscribe      = "resources/subscribe";
+inline constexpr std::string_view method_resources_unsubscribe    = "resources/unsubscribe";
+inline constexpr std::string_view method_notifications_resources_list_changed
+    = "notifications/resources/list_changed";
+inline constexpr std::string_view method_notifications_resources_updated
+    = "notifications/resources/updated";
 
 }  // namespace mcp
 

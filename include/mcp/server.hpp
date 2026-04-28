@@ -48,6 +48,12 @@ public:
     using ToolHandler =
         std::function<CallToolResult(const nlohmann::json& arguments)>;
 
+    /// Resource read handler. Receives the requested URI and returns
+    /// the resource contents. Throwing mcp::Error is reported back as a
+    /// JSON-RPC error.
+    using ResourceReadHandler =
+        std::function<ReadResourceResult(const std::string& uri)>;
+
     explicit Server(Implementation server_info);
 
     Server(const Server&) = delete;
@@ -67,6 +73,23 @@ public:
                  std::optional<std::string>     description = std::nullopt,
                  std::optional<ToolAnnotations> annotations = std::nullopt,
                  std::optional<nlohmann::json>  output_schema = std::nullopt);
+
+    /// Register a resource the server exposes. The handler is invoked
+    /// when a client calls `resources/read` for this URI.
+    Server& resource(Resource           descriptor,
+                     ResourceReadHandler handler);
+
+    /// Add a resource template (for parameterised URIs). The handler
+    /// for a templated read isn't bound to a single URI — register the
+    /// matching read with a fallback resource handler if you need
+    /// dispatch by pattern. (URI-template matching lives in the
+    /// application layer for now; we may grow it into the SDK later.)
+    Server& resource_template(ResourceTemplate descriptor);
+
+    /// Optional: a fallback resource read handler invoked when no
+    /// specifically-registered URI matches. Useful for templated
+    /// resources or generic-protocol URIs.
+    Server& fallback_resource_handler(ResourceReadHandler handler);
 
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
@@ -88,16 +111,28 @@ private:
     nlohmann::json handle_initialize(const nlohmann::json& params);
     nlohmann::json handle_list_tools(const nlohmann::json& params);
     nlohmann::json handle_call_tool(const nlohmann::json& params);
+    nlohmann::json handle_list_resources(const nlohmann::json& params);
+    nlohmann::json handle_list_resource_templates(const nlohmann::json& params);
+    nlohmann::json handle_read_resource(const nlohmann::json& params);
 
     struct ToolEntry {
         Tool        descriptor;
         ToolHandler handler;
+    };
+    struct ResourceEntry {
+        Resource             descriptor;
+        ResourceReadHandler  handler;
     };
 
     Implementation                              server_info_;
     std::optional<std::string>                  instructions_;
     std::unordered_map<std::string, ToolEntry>  tools_;
     std::mutex                                  tools_mu_;
+
+    std::unordered_map<std::string, ResourceEntry> resources_;
+    std::vector<ResourceTemplate>                  resource_templates_;
+    ResourceReadHandler                            fallback_resource_handler_;
+    std::mutex                                     resources_mu_;
 
     std::unique_ptr<Session>                    session_;
     std::atomic<bool>                           initialized_{false};

@@ -126,4 +126,82 @@ Client::call_tool(std::string name, nlohmann::json arguments) {
         });
 }
 
+// =====================================================================
+// resources
+// =====================================================================
+
+std::future<ListResourcesResult>
+Client::list_resources(std::optional<std::string> cursor) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    ListResourcesRequestParams params{.cursor = std::move(cursor)};
+    auto inner = session_->send_request(std::string{method_resources_list},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ListResourcesResult {
+            return inner.get().get<ListResourcesResult>();
+        });
+}
+
+std::future<ListResourceTemplatesResult>
+Client::list_resource_templates(std::optional<std::string> cursor) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    ListResourceTemplatesRequestParams params{.cursor = std::move(cursor)};
+    auto inner = session_->send_request(std::string{method_resources_templates_list},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ListResourceTemplatesResult {
+            return inner.get().get<ListResourceTemplatesResult>();
+        });
+}
+
+std::future<ReadResourceResult>
+Client::read_resource(std::string uri) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    ReadResourceRequestParams params{.uri = std::move(uri)};
+    auto inner = session_->send_request(std::string{method_resources_read},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ReadResourceResult {
+            return inner.get().get<ReadResourceResult>();
+        });
+}
+
+std::future<nlohmann::json>
+Client::subscribe(std::string uri) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    SubscribeRequestParams params{.uri = std::move(uri)};
+    return session_->send_request(std::string{method_resources_subscribe},
+                                  nlohmann::json(params));
+}
+
+std::future<nlohmann::json>
+Client::unsubscribe(std::string uri) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    UnsubscribeRequestParams params{.uri = std::move(uri)};
+    return session_->send_request(std::string{method_resources_unsubscribe},
+                                  nlohmann::json(params));
+}
+
+void Client::set_resource_updated_handler(ResourceUpdatedHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    if (handler) {
+        session_->set_notification_handler(
+            std::string{method_notifications_resources_updated},
+            [h = std::move(handler)](const nlohmann::json& params) {
+                if (params.is_null()) return;
+                ResourceUpdatedNotificationParams parsed = params.get<ResourceUpdatedNotificationParams>();
+                h(parsed);
+            });
+    }
+}
+
+void Client::set_resources_list_changed_handler(ListChangedHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    if (handler) {
+        session_->set_notification_handler(
+            std::string{method_notifications_resources_list_changed},
+            [h = std::move(handler)](const nlohmann::json&) { h(); });
+    }
+}
+
 }  // namespace mcp
