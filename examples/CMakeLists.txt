@@ -1,1 +1,1 @@
-# Examples will be added per phase.
+add_subdirectory(calculator_server)

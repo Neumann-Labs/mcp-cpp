@@ -44,6 +44,22 @@ Session::Session(std::unique_ptr<Transport> transport, Options opts)
             {},
         };
         cancel_all_pending(reason);
+        // Mark the session closed so is_open() flips, and notify any
+        // user code waiting on the close hook (e.g. Server::run).
+        closed_.store(true, std::memory_order_release);
+        ClosedCallback cb;
+        {
+            std::lock_guard<std::mutex> lk(closed_cb_mu_);
+            if (!closed_cb_fired_.exchange(true, std::memory_order_acq_rel)) {
+                cb = on_closed_;
+            }
+        }
+        if (cb) {
+            try { cb(); }
+            catch (const std::exception& e) {
+                MCP_LOG_ERROR(std::string{"on_closed threw: "} + e.what());
+            }
+        }
     });
 }
 
@@ -75,6 +91,11 @@ void Session::set_fallback_notification_handler(NotificationHandler h) {
     fallback_note_ = std::move(h);
 }
 
+void Session::set_on_closed(ClosedCallback cb) {
+    std::lock_guard<std::mutex> lk(closed_cb_mu_);
+    on_closed_ = std::move(cb);
+}
+
 // =====================================================================
 // Lifecycle
 // =====================================================================
@@ -91,12 +112,15 @@ void Session::start() {
 }
 
 void Session::close() {
+    // Two callers can land here: (1) the application calling close()
+    // directly, (2) the Session destructor. Whichever arrives first
+    // tears down the transport; both must run the rest so that
+    // double-destruction can't leave the timeout thread joinable
+    // (which would call std::terminate from ~thread).
     bool expected = false;
-    if (!closed_.compare_exchange_strong(expected, true,
-                                         std::memory_order_acq_rel)) {
-        return;
-    }
-    if (transport_) transport_->close();
+    const bool first = closed_.compare_exchange_strong(expected, true,
+                                                       std::memory_order_acq_rel);
+    if (first && transport_) transport_->close();
 
     {
         std::lock_guard<std::mutex> lk(pending_mu_);

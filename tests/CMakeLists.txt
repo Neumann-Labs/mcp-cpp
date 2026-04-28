@@ -19,4 +19,14 @@ target_sources(mcp_tests PRIVATE
     server_client_integration_test.cpp
 )
 
-gtest_discover_tests(mcp_tests DISCOVERY_TIMEOUT 60)
+# The calculator_server subprocess test only builds in if the example is
+# being built, since it needs the path of that binary at runtime.
+if(MCP_BUILD_EXAMPLES AND TARGET calculator_server)
+    target_sources(mcp_tests PRIVATE calculator_subprocess_test.cpp)
+endif()
+
+gtest_discover_tests(mcp_tests
+    DISCOVERY_TIMEOUT 60
+    PROPERTIES ENVIRONMENT
+        "MCP_CALCULATOR_SERVER=$<TARGET_FILE:calculator_server>"
+)

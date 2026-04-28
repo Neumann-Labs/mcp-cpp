@@ -230,6 +230,33 @@ TEST(Session, IsOpenReflectsLifecycle) {
     sp.b->close();
 }
 
+TEST(Session, DoubleCloseDoesNotLeaveJoinableThread) {
+    // Regression: close() short-circuiting once closed_ was true left the
+    // timeout thread joinable, so ~Session called std::terminate from
+    // ~thread. Both close() callers must run to completion.
+    auto sp = make_session_pair();
+    sp.a->close();
+    sp.a->close();           // explicit double close
+    SUCCEED();               // arriving here without terminate is the test
+    sp.b->close();
+}
+
+TEST(Session, OnClosedHookFiresWhenPeerCloses) {
+    auto p = mcp::test::make_in_memory_pair();
+    auto a = std::make_unique<mcp::Session>(std::move(p.a));
+    auto b = std::make_unique<mcp::Session>(std::move(p.b));
+
+    std::promise<void> got_close;
+    a->set_on_closed([&] { got_close.set_value(); });
+    a->start();
+    b->start();
+
+    b->close();
+    EXPECT_EQ(got_close.get_future().wait_for(2s), std::future_status::ready);
+
+    a->close();
+}
+
 TEST(Session, MalformedFrameIsDropped) {
     auto p = mcp::test::make_in_memory_pair();
     auto a = std::make_unique<mcp::Session>(std::move(p.a));

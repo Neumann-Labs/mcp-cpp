@@ -87,6 +87,12 @@ public:
     /// Fallback handler for unmatched notifications; the default ignores.
     void set_fallback_notification_handler(NotificationHandler h);
 
+    /// Hook fired when the underlying transport closes (EOF, error, or
+    /// after a local close()). Fires at most once. Safe to register
+    /// before or after start().
+    using ClosedCallback = std::function<void()>;
+    void set_on_closed(ClosedCallback cb);
+
     /// Begin processing. Idempotent.
     void start();
 
@@ -147,6 +153,10 @@ private:
     std::unordered_map<std::string, NotificationHandler>    note_handlers_;
     RequestHandler                                          fallback_req_;
     NotificationHandler                                     fallback_note_;
+
+    std::mutex                                              closed_cb_mu_;
+    ClosedCallback                                          on_closed_;
+    std::atomic<bool>                                       closed_cb_fired_{false};
 };
 
 }  // namespace mcp

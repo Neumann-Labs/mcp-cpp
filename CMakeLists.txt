@@ -120,13 +120,15 @@ add_subdirectory(src)
 
 # ----- Tests / examples ----------------------------------------------------
 
+# Examples first so the calculator_server target exists when tests pick
+# it up for the subprocess integration test.
+if(MCP_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
 if(MCP_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
-endif()
-
-if(MCP_BUILD_EXAMPLES)
-    add_subdirectory(examples)
 endif()
 
 # ----- Install -------------------------------------------------------------

@@ -150,6 +150,11 @@ void Server::run(std::unique_ptr<Transport> transport) {
             MCP_LOG_DEBUG("client sent notifications/initialized");
         });
 
+    session_->set_on_closed([this]() {
+        std::lock_guard<std::mutex> lk(stop_mu_);
+        stop_cv_.notify_all();
+    });
+
     session_->start();
 
     {
@@ -159,7 +164,6 @@ void Server::run(std::unique_ptr<Transport> transport) {
                    !session_->is_open();
         });
     }
-
     session_->close();
     session_.reset();
 }

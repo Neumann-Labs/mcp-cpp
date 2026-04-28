@@ -61,11 +61,7 @@ void InMemoryTransport::start() {
 }
 
 void InMemoryTransport::close() {
-    bool expected = false;
-    if (!closed_.compare_exchange_strong(expected, true,
-                                         std::memory_order_acq_rel)) {
-        return;
-    }
+    const bool first = !closed_.exchange(true, std::memory_order_acq_rel);
     {
         // Wake our own dispatch loop.
         auto& ours = endpoint_for(*ch_, side_);
@@ -74,16 +70,16 @@ void InMemoryTransport::close() {
         ours.cv.notify_all();
     }
     {
-        // Tell the peer we're gone so its `send()` fails and its dispatch
-        // exits when its queue drains.
+        // Tell the peer we're gone: setting the peer's incoming (its `ours`)
+        // endpoint as closed makes its dispatch loop unwind once drained.
         auto& peer = peer_endpoint(*ch_, side_);
         std::lock_guard<std::mutex> lk(peer.mu);
-        peer.closed = true;  // peer's "incoming from us" tap is closed
+        peer.closed = true;
         peer.cv.notify_all();
     }
     if (worker_.joinable()) worker_.join();
 
-    if (on_close_) {
+    if (first && on_close_) {
         try { on_close_(); }
         catch (const std::exception& e) {
             MCP_LOG_ERROR(std::string{"on_close threw: "} + e.what());
@@ -113,12 +109,19 @@ bool InMemoryTransport::is_open() const noexcept {
 
 void InMemoryTransport::run_dispatch() {
     auto& ours = endpoint_for(*ch_, side_);
+    bool peer_initiated_close = false;
     while (true) {
         std::string frame;
         {
             std::unique_lock<std::mutex> lk(ours.mu);
             ours.cv.wait(lk, [&] { return ours.closed || !ours.q.empty(); });
-            if (ours.closed && ours.q.empty()) return;
+            if (ours.closed && ours.q.empty()) {
+                // If we're being torn down by the peer (close_ flag was
+                // flipped before our own close()), surface that as
+                // on_close so user code mirrors EOF semantics.
+                peer_initiated_close = !closed_.load(std::memory_order_acquire);
+                break;
+            }
             frame = std::move(ours.q.front());
             ours.q.pop_front();
         }
@@ -126,6 +129,15 @@ void InMemoryTransport::run_dispatch() {
             try { on_message_(std::move(frame)); }
             catch (const std::exception& e) {
                 MCP_LOG_ERROR(std::string{"on_message threw: "} + e.what());
+            }
+        }
+    }
+    if (peer_initiated_close) {
+        closed_.store(true, std::memory_order_release);
+        if (on_close_) {
+            try { on_close_(); }
+            catch (const std::exception& e) {
+                MCP_LOG_ERROR(std::string{"on_close threw: "} + e.what());
             }
         }
     }
