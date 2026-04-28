@@ -708,4 +708,96 @@ void from_json(const nlohmann::json& j, ResourceUpdatedNotificationParams& p) {
     p.uri = require<std::string>(j, "uri");
 }
 
+// =====================================================================
+// Prompts
+// =====================================================================
+
+void to_json(nlohmann::json& j, const PromptArgument& a) {
+    j = nlohmann::json::object();
+    j["name"] = a.name;
+    put_optional(j, "title",       a.title);
+    put_optional(j, "description", a.description);
+    put_optional(j, "required",    a.required);
+}
+void from_json(const nlohmann::json& j, PromptArgument& a) {
+    a.name = require<std::string>(j, "name");
+    take_optional(j, "title",       a.title);
+    take_optional(j, "description", a.description);
+    take_optional(j, "required",    a.required);
+}
+
+void to_json(nlohmann::json& j, const Prompt& p) {
+    j = nlohmann::json::object();
+    j["name"] = p.name;
+    put_optional(j, "title",       p.title);
+    put_optional(j, "description", p.description);
+    if (p.arguments.has_value()) j["arguments"] = *p.arguments;
+}
+void from_json(const nlohmann::json& j, Prompt& p) {
+    p.name = require<std::string>(j, "name");
+    take_optional(j, "title",       p.title);
+    take_optional(j, "description", p.description);
+    if (auto it = j.find("arguments"); it != j.end() && !it->is_null()) {
+        p.arguments = it->get<std::vector<PromptArgument>>();
+    }
+}
+
+void to_json(nlohmann::json& j, const PromptMessage& m) {
+    j = nlohmann::json::object();
+    j["role"]    = m.role;
+    j["content"] = m.content;
+}
+void from_json(const nlohmann::json& j, PromptMessage& m) {
+    m.role    = j.at("role").get<Role>();
+    m.content = j.at("content").get<ContentBlock>();
+}
+
+void to_json(nlohmann::json& j, const ListPromptsRequestParams& p) {
+    j = nlohmann::json::object();
+    put_optional(j, "cursor", p.cursor);
+}
+void from_json(const nlohmann::json& j, ListPromptsRequestParams& p) {
+    take_optional(j, "cursor", p.cursor);
+}
+
+void to_json(nlohmann::json& j, const ListPromptsResult& r) {
+    j = nlohmann::json::object();
+    j["prompts"] = r.prompts;
+    put_optional(j, "nextCursor", r.next_cursor);
+}
+void from_json(const nlohmann::json& j, ListPromptsResult& r) {
+    r.prompts = j.at("prompts").get<std::vector<Prompt>>();
+    take_optional(j, "nextCursor", r.next_cursor);
+}
+
+void to_json(nlohmann::json& j, const GetPromptRequestParams& p) {
+    j = nlohmann::json::object();
+    j["name"] = p.name;
+    if (p.arguments.has_value()) {
+        nlohmann::json args = nlohmann::json::object();
+        for (const auto& [k, v] : *p.arguments) args[k] = v;
+        j["arguments"] = std::move(args);
+    }
+}
+void from_json(const nlohmann::json& j, GetPromptRequestParams& p) {
+    p.name = require<std::string>(j, "name");
+    if (auto it = j.find("arguments"); it != j.end() && it->is_object()) {
+        std::unordered_map<std::string, std::string> args;
+        for (auto i = it->begin(); i != it->end(); ++i) {
+            if (i.value().is_string()) args.emplace(i.key(), i.value().get<std::string>());
+        }
+        p.arguments = std::move(args);
+    }
+}
+
+void to_json(nlohmann::json& j, const GetPromptResult& r) {
+    j = nlohmann::json::object();
+    put_optional(j, "description", r.description);
+    j["messages"] = r.messages;
+}
+void from_json(const nlohmann::json& j, GetPromptResult& r) {
+    take_optional(j, "description", r.description);
+    r.messages = j.at("messages").get<std::vector<PromptMessage>>();
+}
+
 }  // namespace mcp

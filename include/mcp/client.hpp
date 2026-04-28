@@ -95,6 +95,19 @@ public:
     using ListChangedHandler = std::function<void()>;
     void set_resources_list_changed_handler(ListChangedHandler handler);
 
+    /// `prompts/list`.
+    [[nodiscard]] std::future<ListPromptsResult>
+    list_prompts(std::optional<std::string> cursor = std::nullopt);
+
+    /// `prompts/get` with the given prompt name and (optional) string-keyed
+    /// arguments to fill in template parameters.
+    [[nodiscard]] std::future<GetPromptResult>
+    get_prompt(std::string                                                  name,
+               std::optional<std::unordered_map<std::string, std::string>>  arguments = std::nullopt);
+
+    /// Hook for inbound notifications/prompts/list_changed.
+    void set_prompts_list_changed_handler(ListChangedHandler handler);
+
     /// True between connect() and disconnect().
     [[nodiscard]] bool is_connected() const noexcept;
 

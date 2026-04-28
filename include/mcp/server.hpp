@@ -54,6 +54,12 @@ public:
     using ResourceReadHandler =
         std::function<ReadResourceResult(const std::string& uri)>;
 
+    /// Prompt-get handler. Receives the (string-keyed, string-valued)
+    /// argument map (which may be empty) and returns the rendered
+    /// prompt as a sequence of PromptMessages.
+    using PromptGetHandler =
+        std::function<GetPromptResult(const std::unordered_map<std::string, std::string>& arguments)>;
+
     explicit Server(Implementation server_info);
 
     Server(const Server&) = delete;
@@ -91,6 +97,11 @@ public:
     /// resources or generic-protocol URIs.
     Server& fallback_resource_handler(ResourceReadHandler handler);
 
+    /// Register a prompt under the given name. Replaces any prior
+    /// registration with the same name.
+    Server& prompt(Prompt           descriptor,
+                   PromptGetHandler handler);
+
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
     /// called or the transport closes.
@@ -114,6 +125,8 @@ private:
     nlohmann::json handle_list_resources(const nlohmann::json& params);
     nlohmann::json handle_list_resource_templates(const nlohmann::json& params);
     nlohmann::json handle_read_resource(const nlohmann::json& params);
+    nlohmann::json handle_list_prompts(const nlohmann::json& params);
+    nlohmann::json handle_get_prompt(const nlohmann::json& params);
 
     struct ToolEntry {
         Tool        descriptor;
@@ -133,6 +146,13 @@ private:
     std::vector<ResourceTemplate>                  resource_templates_;
     ResourceReadHandler                            fallback_resource_handler_;
     std::mutex                                     resources_mu_;
+
+    struct PromptEntry {
+        Prompt           descriptor;
+        PromptGetHandler handler;
+    };
+    std::unordered_map<std::string, PromptEntry>   prompts_;
+    std::mutex                                     prompts_mu_;
 
     std::unique_ptr<Session>                    session_;
     std::atomic<bool>                           initialized_{false};

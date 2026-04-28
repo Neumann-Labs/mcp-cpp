@@ -18,6 +18,7 @@ target_sources(mcp_tests PRIVATE
     session_test.cpp
     server_client_integration_test.cpp
     resources_test.cpp
+    prompts_test.cpp
 )
 
 # The calculator_server subprocess test only builds in if the example is

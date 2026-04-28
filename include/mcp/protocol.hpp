@@ -22,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -480,6 +481,67 @@ inline constexpr std::string_view method_notifications_resources_list_changed
     = "notifications/resources/list_changed";
 inline constexpr std::string_view method_notifications_resources_updated
     = "notifications/resources/updated";
+
+// --------------------------------------------------------------------------
+// Prompts
+// --------------------------------------------------------------------------
+
+struct PromptArgument {
+    std::string                name;
+    std::optional<std::string> title;
+    std::optional<std::string> description;
+    std::optional<bool>        required;
+};
+void to_json(nlohmann::json& j, const PromptArgument& a);
+void from_json(const nlohmann::json& j, PromptArgument& a);
+
+struct Prompt {
+    std::string                       name;
+    std::optional<std::string>        title;
+    std::optional<std::string>        description;
+    std::optional<std::vector<PromptArgument>> arguments;
+};
+void to_json(nlohmann::json& j, const Prompt& p);
+void from_json(const nlohmann::json& j, Prompt& p);
+
+struct PromptMessage {
+    Role         role;
+    ContentBlock content;
+};
+void to_json(nlohmann::json& j, const PromptMessage& m);
+void from_json(const nlohmann::json& j, PromptMessage& m);
+
+struct ListPromptsRequestParams {
+    std::optional<std::string> cursor;
+};
+void to_json(nlohmann::json& j, const ListPromptsRequestParams& p);
+void from_json(const nlohmann::json& j, ListPromptsRequestParams& p);
+
+struct ListPromptsResult {
+    std::vector<Prompt>        prompts;
+    std::optional<std::string> next_cursor;
+};
+void to_json(nlohmann::json& j, const ListPromptsResult& r);
+void from_json(const nlohmann::json& j, ListPromptsResult& r);
+
+struct GetPromptRequestParams {
+    std::string                                            name;
+    std::optional<std::unordered_map<std::string, std::string>> arguments;
+};
+void to_json(nlohmann::json& j, const GetPromptRequestParams& p);
+void from_json(const nlohmann::json& j, GetPromptRequestParams& p);
+
+struct GetPromptResult {
+    std::optional<std::string>  description;
+    std::vector<PromptMessage>  messages;
+};
+void to_json(nlohmann::json& j, const GetPromptResult& r);
+void from_json(const nlohmann::json& j, GetPromptResult& r);
+
+inline constexpr std::string_view method_prompts_list = "prompts/list";
+inline constexpr std::string_view method_prompts_get  = "prompts/get";
+inline constexpr std::string_view method_notifications_prompts_list_changed
+    = "notifications/prompts/list_changed";
 
 }  // namespace mcp
 

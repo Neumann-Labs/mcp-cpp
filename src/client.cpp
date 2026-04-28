@@ -204,4 +204,45 @@ void Client::set_resources_list_changed_handler(ListChangedHandler handler) {
     }
 }
 
+// =====================================================================
+// prompts
+// =====================================================================
+
+std::future<ListPromptsResult>
+Client::list_prompts(std::optional<std::string> cursor) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    ListPromptsRequestParams params{.cursor = std::move(cursor)};
+    auto inner = session_->send_request(std::string{method_prompts_list},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ListPromptsResult {
+            return inner.get().get<ListPromptsResult>();
+        });
+}
+
+std::future<GetPromptResult>
+Client::get_prompt(std::string name,
+                   std::optional<std::unordered_map<std::string, std::string>> arguments) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    GetPromptRequestParams params{
+        .name      = std::move(name),
+        .arguments = std::move(arguments),
+    };
+    auto inner = session_->send_request(std::string{method_prompts_get},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> GetPromptResult {
+            return inner.get().get<GetPromptResult>();
+        });
+}
+
+void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    if (handler) {
+        session_->set_notification_handler(
+            std::string{method_notifications_prompts_list_changed},
+            [h = std::move(handler)](const nlohmann::json&) { h(); });
+    }
+}
+
 }  // namespace mcp

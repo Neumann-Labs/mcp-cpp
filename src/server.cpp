@@ -64,6 +64,13 @@ Server& Server::fallback_resource_handler(ResourceReadHandler handler) {
     return *this;
 }
 
+Server& Server::prompt(Prompt descriptor, PromptGetHandler handler) {
+    std::lock_guard<std::mutex> lk(prompts_mu_);
+    const std::string name = descriptor.name;
+    prompts_[name] = PromptEntry{std::move(descriptor), std::move(handler)};
+    return *this;
+}
+
 // =====================================================================
 // Handlers
 // =====================================================================
@@ -101,6 +108,10 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
             fallback_resource_handler_) {
             result.capabilities.resources = ResourcesCapability{};
         }
+    }
+    {
+        std::lock_guard<std::mutex> lk(prompts_mu_);
+        if (!prompts_.empty()) result.capabilities.prompts = PromptsCapability{};
     }
 
     initialized_.store(true, std::memory_order_release);
@@ -209,6 +220,47 @@ nlohmann::json Server::handle_read_resource(const nlohmann::json& params) {
     return h(parsed.uri);
 }
 
+nlohmann::json Server::handle_list_prompts(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    (void)params;
+    ListPromptsResult res;
+    {
+        std::lock_guard<std::mutex> lk(prompts_mu_);
+        res.prompts.reserve(prompts_.size());
+        for (const auto& [name, entry] : prompts_) res.prompts.push_back(entry.descriptor);
+    }
+    return res;
+}
+
+nlohmann::json Server::handle_get_prompt(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    GetPromptRequestParams parsed;
+    try {
+        parsed = params.get<GetPromptRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid prompts/get params: "} + e.what()};
+    }
+
+    PromptGetHandler h;
+    {
+        std::lock_guard<std::mutex> lk(prompts_mu_);
+        auto it = prompts_.find(parsed.name);
+        if (it != prompts_.end()) h = it->second.handler;
+    }
+    if (!h) {
+        throw Error{error_code::method_not_found,
+                    "prompt not found: " + parsed.name};
+    }
+    const auto args = parsed.arguments.value_or(
+        std::unordered_map<std::string, std::string>{});
+    return h(args);
+}
+
 // =====================================================================
 // Lifecycle
 // =====================================================================
@@ -234,6 +286,10 @@ void Server::run(std::unique_ptr<Transport> transport) {
         [this](const nlohmann::json& p) { return handle_list_resource_templates(p); });
     session_->set_request_handler(std::string{method_resources_read},
         [this](const nlohmann::json& p) { return handle_read_resource(p); });
+    session_->set_request_handler(std::string{method_prompts_list},
+        [this](const nlohmann::json& p) { return handle_list_prompts(p); });
+    session_->set_request_handler(std::string{method_prompts_get},
+        [this](const nlohmann::json& p) { return handle_get_prompt(p); });
 
     session_->set_notification_handler(std::string{method_notifications_initialized},
         [](const nlohmann::json&) {
