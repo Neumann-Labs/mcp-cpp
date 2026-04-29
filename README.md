@@ -46,7 +46,7 @@ agents, native applications, and high-throughput servers.
 | Ping (`ping`) | ✅ | ✅ | bi-directional liveness |
 | Pagination | ✅ | ✅ | configurable page size |
 | `stdio` transport | ✅ | ✅ | spec-correct framing |
-| Streamable HTTP transport | 🚧 | 🚧 | post-0.1 |
+| Streamable HTTP transport | ✅ | ✅ | POST + SSE GET stream + session ids |
 | Tasks (2025-11-25 primitive) | 🚧 | 🚧 | post-0.1 |
 | Elicitation, OAuth 2.1 | 🚧 | 🚧 | post-0.1 |
 
@@ -116,6 +116,45 @@ int main() {
 }
 ```
 
+### Hosting over HTTP
+
+Same server, exposed as a Streamable HTTP endpoint. Multiple clients
+each get their own `Mcp-Session-Id`-keyed session.
+
+```cpp
+mcp::HttpServerHost host{
+    mcp::Implementation{.name = "calc", .version = "1.0"},
+    mcp::HttpServerHost::Options{
+        .host            = "127.0.0.1",
+        .port            = 8080,
+        .path            = "/mcp",
+        .allowed_origins = {"https://example.com"},  // DNS-rebind defense
+    },
+    [](mcp::Server& s) {
+        s.tool("add", schema, handler);
+    },
+};
+host.start();
+// ... wait for shutdown signal ...
+host.stop();
+```
+
+A client connects to it the same way it connects to a stdio server,
+but with `HttpClientTransport` instead of `StdioTransport`:
+
+```cpp
+mcp::HttpClientTransport::Options topts;
+topts.url = "http://localhost:8080/mcp";
+mcp::Client client{mcp::Implementation{.name = "my-app", .version = "0.1"}};
+client.connect(std::make_unique<mcp::HttpClientTransport>(topts));
+auto info = client.initialize().get();
+auto out  = client.call_tool("add", {{"a", 1}, {"b", 2}}).get();
+```
+
+Both `examples/http_calculator_server` (binds 127.0.0.1:8080 by
+default) and the stdio `examples/calculator_server` ship with the
+build.
+
 ### Server-initiated LLM calls (sampling)
 
 A common agentic pattern is for a tool to ask the host application to make
@@ -175,6 +214,7 @@ ctest --test-dir build --output-on-failure
 | `MCP_BUILD_EXAMPLES`      | ON      | Build the example servers/clients.           |
 | `MCP_WARNINGS_AS_ERRORS`  | ON*     | Promote warnings to errors (top-level only). |
 | `MCP_USE_SYSTEM_DEPS`     | OFF     | `find_package` instead of `FetchContent`.    |
+| `MCP_ENABLE_HTTP`         | ON      | Build the Streamable HTTP transport (cpp-httplib). |
 | `MCP_ENABLE_ASAN`         | OFF     | `-fsanitize=address,undefined`.              |
 | `MCP_ENABLE_TSAN`         | OFF     | `-fsanitize=thread`.                         |
 | `MCP_ENABLE_COVERAGE`     | OFF     | `--coverage` for gcov/llvm-cov.              |

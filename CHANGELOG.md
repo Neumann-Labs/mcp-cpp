@@ -45,3 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   {Debug, RelWithDebInfo}, plus dedicated ASan/TSan jobs and an
   install-and-consume job that builds a downstream `find_package`
   user.
+- **Streamable HTTP transport** (spec section "Streamable HTTP"):
+  - `HttpClientTransport` — connects to any spec-compliant remote
+    MCP endpoint. Handles application/json and text/event-stream
+    responses, captures and round-trips the `Mcp-Session-Id`
+    header, opens an SSE GET stream for server-initiated traffic
+    (sampling, server log emissions, etc.).
+  - `HttpServerHost` — multi-session host built on cpp-httplib.
+    Mints session ids on `initialize`, routes POST + GET + DELETE
+    on a single configurable endpoint path, validates the `Origin`
+    header against a configurable allowlist (DNS-rebind defense),
+    and exposes server-initiated traffic over an SSE GET stream.
+  - cpp-httplib v0.18.5 wired via `FetchContent` and gated on the
+    new `MCP_ENABLE_HTTP` CMake option (default ON).
+  - `examples/http_calculator_server`: stdio calculator's twin,
+    exposed over HTTP.
