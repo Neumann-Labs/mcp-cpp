@@ -76,12 +76,13 @@ public:
 
     /// `resources/subscribe` — request `notifications/resources/updated`
     /// frames whenever this URI's contents change. Subscribe handlers
-    /// for incoming updates: see `set_resource_updated_handler`.
-    [[nodiscard]] std::future<nlohmann::json>
+    /// for incoming updates: see `set_resource_updated_handler`. The
+    /// future resolves on success and throws mcp::Error on failure.
+    [[nodiscard]] std::future<void>
     subscribe(std::string uri);
 
     /// `resources/unsubscribe`.
-    [[nodiscard]] std::future<nlohmann::json>
+    [[nodiscard]] std::future<void>
     unsubscribe(std::string uri);
 
     /// Register a handler for inbound resource-update notifications.
@@ -112,8 +113,10 @@ public:
     /// Phase 2 does not yet integrate cancellation with the futures
     /// returned by request methods — the caller must already know the
     /// id (typically obtained via a future Phase 3 cancellation token).
-    void cancel_request(RequestId request_id,
-                        std::optional<std::string> reason = std::nullopt);
+    /// Returns the underlying transport error_code on failure (e.g.
+    /// transport closed); empty error_code on success.
+    std::error_code cancel_request(RequestId request_id,
+                                   std::optional<std::string> reason = std::nullopt);
 
     /// Send `ping` and wait for a response. Returns void on success;
     /// the future throws on timeout / error.
@@ -121,8 +124,9 @@ public:
 
     /// Send `logging/setLevel` to ask the server to change its
     /// log-message threshold. The server may reject if it does not
-    /// support the logging capability.
-    [[nodiscard]] std::future<nlohmann::json>
+    /// support the logging capability. The future resolves on success
+    /// and throws mcp::Error on failure.
+    [[nodiscard]] std::future<void>
     set_log_level(LoggingLevel level);
 
     /// Hook for inbound `notifications/message` (server-emitted log).
@@ -160,7 +164,8 @@ public:
     void set_client_capabilities(ClientCapabilities caps);
 
     /// Notify the server that the client's roots list changed.
-    void notify_roots_list_changed();
+    /// Returns the underlying transport error_code on failure.
+    std::error_code notify_roots_list_changed();
 
     /// True between connect() and disconnect().
     [[nodiscard]] bool is_connected() const noexcept;

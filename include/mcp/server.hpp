@@ -118,9 +118,9 @@ public:
     /// if logging is not enabled or `level` is below the negotiated
     /// minimum. `data` is free-form JSON (typically a string or
     /// object). Returns `true` if the notification was sent.
-    bool log(LoggingLevel               level,
-             nlohmann::json             data,
-             std::optional<std::string> logger = std::nullopt);
+    [[nodiscard]] bool log(LoggingLevel level,
+                           nlohmann::json data,
+                           std::optional<std::string> logger = std::nullopt);
 
     /// Emit a `notifications/progress` for the given progress token.
     /// `total` and `message` are optional per spec.

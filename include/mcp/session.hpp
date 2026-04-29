@@ -80,6 +80,14 @@ public:
     /// Register a handler for inbound notifications with the given method.
     void set_notification_handler(std::string method, NotificationHandler h);
 
+    /// Remove a previously-registered request handler. After this returns,
+    /// inbound requests with `method` route to the fallback handler (or
+    /// produce method_not_found if no fallback is set).
+    void clear_request_handler(const std::string& method);
+
+    /// Remove a previously-registered notification handler.
+    void clear_notification_handler(const std::string& method);
+
     /// Fallback handler invoked when no method-specific request handler
     /// matches. The default rejects with method_not_found.
     void set_fallback_request_handler(RequestHandler h);

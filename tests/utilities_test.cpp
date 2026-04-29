@@ -128,7 +128,7 @@ TEST(LoggingIntegration, ServerLogReachesClient) {
         s.tool("emit_log",
                json{{"type", "object"}},
                [&s](const json&) {
-                   s.log(mcp::LoggingLevel::warning, json{{"msg", "hi"}}, "logger-1");
+                   (void)s.log(mcp::LoggingLevel::warning, json{{"msg", "hi"}}, "logger-1");
                    return mcp::CallToolResult{
                        .content = { mcp::TextContent{.text = "ok"} },
                    };
@@ -165,7 +165,7 @@ TEST(LoggingIntegration, SetLevelFiltersServerEmissions) {
         s.tool("emit_debug",
                json{{"type", "object"}},
                [&s](const json&) {
-                   s.log(mcp::LoggingLevel::debug, "should-be-filtered");
+                   (void)s.log(mcp::LoggingLevel::debug, "should-be-filtered");
                    return mcp::CallToolResult{
                        .content = { mcp::TextContent{.text = "ok"} },
                    };

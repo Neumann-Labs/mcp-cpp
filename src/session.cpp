@@ -81,6 +81,16 @@ void Session::set_notification_handler(std::string method, NotificationHandler h
     note_handlers_[std::move(method)] = std::move(h);
 }
 
+void Session::clear_request_handler(const std::string& method) {
+    std::lock_guard<std::mutex> lk(handlers_mu_);
+    req_handlers_.erase(method);
+}
+
+void Session::clear_notification_handler(const std::string& method) {
+    std::lock_guard<std::mutex> lk(handlers_mu_);
+    note_handlers_.erase(method);
+}
+
 void Session::set_fallback_request_handler(RequestHandler h) {
     std::lock_guard<std::mutex> lk(handlers_mu_);
     fallback_req_ = std::move(h);

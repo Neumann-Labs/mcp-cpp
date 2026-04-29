@@ -18,6 +18,7 @@
 
 #include <unistd.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -215,6 +216,92 @@ TEST(AuditRegression, ProgressTokenAcceptsWholeFloat) {
     auto t = json::parse("42.0").get<mcp::ProgressToken>();
     EXPECT_TRUE(t.is_integer());
     EXPECT_EQ(t.as_integer(), 42);
+}
+
+// -------------------------------------------------------------------------
+// Handler unregistration (audit API #1, concurrency #2):
+// passing nullptr to set_*_handler must actually clear the handler,
+// not silently leave the previous one installed.
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, NullSetNotificationHandlerActuallyClears) {
+    auto p = mcp::test::make_in_memory_pair();
+    auto a = std::make_unique<mcp::Session>(std::move(p.a));
+    auto b = std::make_unique<mcp::Session>(std::move(p.b));
+
+    std::atomic<int> hits{0};
+    a->set_notification_handler("ping",
+        [&](const json&) { ++hits; });
+    a->start();
+    b->start();
+
+    // First send: handler runs.
+    EXPECT_FALSE(b->send_notification("ping"));
+    std::this_thread::sleep_for(100ms);
+    EXPECT_EQ(hits.load(), 1);
+
+    // Now clear and send again — must NOT run.
+    a->clear_notification_handler("ping");
+    EXPECT_FALSE(b->send_notification("ping"));
+    std::this_thread::sleep_for(100ms);
+    EXPECT_EQ(hits.load(), 1);  // unchanged
+
+    a->close();
+    b->close();
+}
+
+TEST(AuditRegression, ClientSetSamplingHandlerNullClears) {
+    auto p = mcp::test::make_in_memory_pair();
+
+    // Spin up a server that calls sample() so we can observe whether
+    // the client honors a cleared handler.
+    std::shared_ptr<mcp::Server> server = std::make_shared<mcp::Server>(
+        mcp::Implementation{.name = "x", .version = "0"});
+    server->tool("ask", json{{"type", "object"}},
+        [&server](const json&) -> mcp::CallToolResult {
+            try {
+                (void)server->sample(mcp::CreateMessageRequestParams{
+                    .messages = { mcp::SamplingMessage{
+                        .role    = mcp::Role::user,
+                        .content = { mcp::TextContent{.text = "x"} },
+                    }},
+                    .max_tokens = 1,
+                }).get();
+                return {.content = { mcp::TextContent{.text = "ok"} }};
+            } catch (const mcp::Error&) {
+                return {.content = { mcp::TextContent{.text = "no-sampling"} },
+                        .is_error = true};
+            }
+        });
+    std::thread srv_thread([s = server, t = std::move(p.b)]() mutable {
+        s->run(std::move(t));
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "tester", .version = "0"} };
+    client.connect(std::move(p.a));
+    client.set_sampling_handler(
+        [](const mcp::CreateMessageRequestParams&) -> mcp::CreateMessageResult {
+            return {
+                .role    = mcp::Role::assistant,
+                .content = { mcp::TextContent{.text = "ok"} },
+                .model   = "test",
+            };
+        });
+    (void)client.initialize().get();
+
+    // First call: handler responds, tool succeeds.
+    auto first = client.call_tool("ask").get();
+    EXPECT_FALSE(first.is_error.value_or(false));
+
+    // Now nullptr-clear the handler. Subsequent server.sample() should
+    // get method_not_found, the tool catches → returns is_error=true.
+    client.set_sampling_handler(nullptr);
+    auto second = client.call_tool("ask").get();
+    EXPECT_TRUE(second.is_error.value_or(false));
+
+    client.disconnect();
+    server->stop();
+    if (srv_thread.joinable()) srv_thread.join();
 }
 
 // -------------------------------------------------------------------------

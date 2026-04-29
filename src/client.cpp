@@ -176,41 +176,48 @@ Client::read_resource(std::string uri) {
         });
 }
 
-std::future<nlohmann::json>
+std::future<void>
 Client::subscribe(std::string uri) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
     SubscribeRequestParams params{.uri = std::move(uri)};
-    return session_->send_request(std::string{method_resources_subscribe},
-                                  nlohmann::json(params));
+    auto inner = session_->send_request(std::string{method_resources_subscribe},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable { (void)inner.get(); });
 }
 
-std::future<nlohmann::json>
+std::future<void>
 Client::unsubscribe(std::string uri) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
     UnsubscribeRequestParams params{.uri = std::move(uri)};
-    return session_->send_request(std::string{method_resources_unsubscribe},
-                                  nlohmann::json(params));
+    auto inner = session_->send_request(std::string{method_resources_unsubscribe},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable { (void)inner.get(); });
 }
 
 void Client::set_resource_updated_handler(ResourceUpdatedHandler handler) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    const std::string method{method_notifications_resources_updated};
     if (handler) {
-        session_->set_notification_handler(
-            std::string{method_notifications_resources_updated},
+        session_->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) {
                 if (params.is_null()) return;
-                ResourceUpdatedNotificationParams parsed = params.get<ResourceUpdatedNotificationParams>();
-                h(parsed);
+                h(params.get<ResourceUpdatedNotificationParams>());
             });
+    } else {
+        session_->clear_notification_handler(method);
     }
 }
 
 void Client::set_resources_list_changed_handler(ListChangedHandler handler) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    const std::string method{method_notifications_resources_list_changed};
     if (handler) {
-        session_->set_notification_handler(
-            std::string{method_notifications_resources_list_changed},
+        session_->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json&) { h(); });
+    } else {
+        session_->clear_notification_handler(method);
     }
 }
 
@@ -248,10 +255,12 @@ Client::get_prompt(std::string name,
 
 void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    const std::string method{method_notifications_prompts_list_changed};
     if (handler) {
-        session_->set_notification_handler(
-            std::string{method_notifications_prompts_list_changed},
+        session_->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json&) { h(); });
+    } else {
+        session_->clear_notification_handler(method);
     }
 }
 
@@ -259,14 +268,16 @@ void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
 // Cancellation, ping, log, progress
 // =====================================================================
 
-void Client::cancel_request(RequestId request_id,
-                            std::optional<std::string> reason) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+std::error_code Client::cancel_request(RequestId request_id,
+                                       std::optional<std::string> reason) {
+    if (!session_) {
+        throw Error{error_code::internal_error, "client not connected"};
+    }
     CancelledNotificationParams params{
         .request_id = std::move(request_id),
         .reason     = std::move(reason),
     };
-    (void)session_->send_notification(
+    return session_->send_notification(
         std::string{method_notifications_cancelled},
         nlohmann::json(params));
 }
@@ -280,34 +291,40 @@ std::future<void> Client::ping() {
         });
 }
 
-std::future<nlohmann::json> Client::set_log_level(LoggingLevel level) {
+std::future<void> Client::set_log_level(LoggingLevel level) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
     SetLevelRequestParams params{.level = level};
-    return session_->send_request(std::string{method_logging_set_level},
-                                  nlohmann::json(params));
+    auto inner = session_->send_request(std::string{method_logging_set_level},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable { (void)inner.get(); });
 }
 
 void Client::set_log_message_handler(LogMessageHandler handler) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    const std::string method{method_notifications_message};
     if (handler) {
-        session_->set_notification_handler(
-            std::string{method_notifications_message},
+        session_->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) {
                 if (params.is_null()) return;
                 h(params.get<LoggingMessageNotificationParams>());
             });
+    } else {
+        session_->clear_notification_handler(method);
     }
 }
 
 void Client::set_progress_handler(ProgressHandler handler) {
     if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    const std::string method{method_notifications_progress};
     if (handler) {
-        session_->set_notification_handler(
-            std::string{method_notifications_progress},
+        session_->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) {
                 if (params.is_null()) return;
                 h(params.get<ProgressNotificationParams>());
             });
+    } else {
+        session_->clear_notification_handler(method);
     }
 }
 
@@ -321,9 +338,9 @@ void Client::set_sampling_handler(SamplingHandler handler) {
         std::lock_guard<std::mutex> lk(handlers_mu_);
         sampling_handler_ = handler;
     }
+    const std::string method{method_sampling_create_message};
     if (handler) {
-        session_->set_request_handler(
-            std::string{method_sampling_create_message},
+        session_->set_request_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) -> nlohmann::json {
                 if (params.is_null()) {
                     throw Error{error_code::invalid_params,
@@ -338,6 +355,8 @@ void Client::set_sampling_handler(SamplingHandler handler) {
                 }
                 return h(parsed);
             });
+    } else {
+        session_->clear_request_handler(method);
     }
 }
 
@@ -347,12 +366,14 @@ void Client::set_roots_list_handler(RootsListHandler handler) {
         std::lock_guard<std::mutex> lk(handlers_mu_);
         roots_handler_ = handler;
     }
+    const std::string method{method_roots_list};
     if (handler) {
-        session_->set_request_handler(
-            std::string{method_roots_list},
+        session_->set_request_handler(method,
             [h = std::move(handler)](const nlohmann::json&) -> nlohmann::json {
                 return h();
             });
+    } else {
+        session_->clear_request_handler(method);
     }
 }
 
@@ -379,9 +400,11 @@ void Client::set_client_capabilities(ClientCapabilities caps) {
     capabilities_override_ = std::move(caps);
 }
 
-void Client::notify_roots_list_changed() {
-    if (!session_) return;
-    (void)session_->send_notification(
+std::error_code Client::notify_roots_list_changed() {
+    if (!session_) {
+        return std::make_error_code(std::errc::not_connected);
+    }
+    return session_->send_notification(
         std::string{method_notifications_roots_list_changed});
 }
 
