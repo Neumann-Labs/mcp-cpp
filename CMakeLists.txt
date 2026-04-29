@@ -27,6 +27,7 @@ option(MCP_BUILD_TESTS    "Build the mcp-cpp test suite"     ${MCP_IS_TOP_LEVEL}
 option(MCP_BUILD_EXAMPLES "Build the mcp-cpp examples"        ${MCP_IS_TOP_LEVEL})
 option(MCP_WARNINGS_AS_ERRORS "Treat warnings as errors"      ${MCP_IS_TOP_LEVEL})
 option(MCP_USE_SYSTEM_DEPS "Use find_package for deps"        OFF)
+option(MCP_ENABLE_HTTP    "Build the Streamable HTTP transport (depends on cpp-httplib)" ON)
 option(MCP_ENABLE_ASAN    "Build with AddressSanitizer + UBSan" OFF)
 option(MCP_ENABLE_TSAN    "Build with ThreadSanitizer"           OFF)
 option(MCP_ENABLE_COVERAGE "Build with code-coverage flags"      OFF)
@@ -83,6 +84,19 @@ if(MCP_BUILD_TESTS)
     endif()
 endif()
 
+if(MCP_ENABLE_HTTP)
+    if(MCP_USE_SYSTEM_DEPS)
+        find_package(httplib CONFIG REQUIRED)
+    else()
+        FetchContent_Declare(httplib
+            GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+            GIT_TAG        v0.18.5
+            GIT_SHALLOW    TRUE)
+        set(HTTPLIB_INSTALL ON  CACHE INTERNAL "")
+        FetchContent_MakeAvailable(httplib)
+    endif()
+endif()
+
 # ----- Library -------------------------------------------------------------
 
 add_library(mcp)
@@ -97,6 +111,11 @@ target_include_directories(mcp
 )
 
 target_link_libraries(mcp PUBLIC nlohmann_json::nlohmann_json)
+
+if(MCP_ENABLE_HTTP)
+    target_link_libraries(mcp PRIVATE httplib::httplib)
+    target_compile_definitions(mcp PUBLIC MCP_ENABLE_HTTP=1)
+endif()
 
 target_compile_options(mcp PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:

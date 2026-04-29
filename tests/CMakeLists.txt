@@ -25,6 +25,11 @@ target_sources(mcp_tests PRIVATE
     audit_regression_test.cpp
 )
 
+if(MCP_ENABLE_HTTP)
+    target_sources(mcp_tests PRIVATE http_client_transport_test.cpp)
+    target_link_libraries(mcp_tests PRIVATE httplib::httplib)
+endif()
+
 # The calculator_server subprocess test only builds in if the example is
 # being built, since it needs the path of that binary at runtime.
 if(MCP_BUILD_EXAMPLES AND TARGET calculator_server)
