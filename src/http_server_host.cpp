@@ -56,33 +56,36 @@ namespace {
 class HttpSessionTransport final : public Transport {
 public:
     void on_message(MessageCallback cb) override {
-        std::deque<std::string> drain;
-        {
-            std::lock_guard<std::mutex> lk(buffered_mu_);
-            on_message_ = std::move(cb);
-            buffered_.swap(drain);
-        }
-        // Replay frames that arrived before the callback was set.
-        // This races with HttpServerHost::start() spawning a session
-        // thread: the host's POST handler can call deliver() the
-        // moment the SessionContext is in the map, but Server::run on
-        // the new thread hasn't yet wired on_message via the Session
-        // constructor. We park frames here so nothing is silently
-        // lost.
-        if (on_message_) {
-            for (auto& f : drain) on_message_(std::move(f));
-        }
+        // Just stash the callback. Crucially we do NOT yet allow
+        // dispatch: Session::Session() wires on_message BEFORE
+        // Server::run registers any of its request handlers. A frame
+        // delivered in that window would route into an empty handler
+        // map and emit a spurious "method not found: initialize"
+        // response. The `started_` gate, flipped by start(), is what
+        // marks the dispatcher as fully populated.
+        std::lock_guard<std::mutex> lk(buffered_mu_);
+        on_message_ = std::move(cb);
     }
     void on_error(ErrorCallback cb)     override { on_error_   = std::move(cb); }
     void on_close(CloseCallback cb)     override { on_close_   = std::move(cb); }
 
     void start() override {
-        running_.store(true, std::memory_order_release);
+        // Flip the gate and drain anything that arrived before all
+        // request handlers were registered. By the time Session::start
+        // runs us, set_request_handler in Server::run has completed.
+        std::deque<std::string> drain;
+        {
+            std::lock_guard<std::mutex> lk(buffered_mu_);
+            started_ = true;
+            buffered_.swap(drain);
+        }
+        if (on_message_) {
+            for (auto& f : drain) on_message_(std::move(f));
+        }
     }
 
     void close() override {
         if (closed_.exchange(true, std::memory_order_acq_rel)) return;
-        running_.store(false, std::memory_order_release);
         // Cancel any waiters on pending POST replies.
         std::unordered_map<std::string, std::promise<std::string>> drained;
         {
@@ -113,8 +116,7 @@ public:
     }
 
     [[nodiscard]] std::error_code send(std::string_view frame) override {
-        if (!running_.load(std::memory_order_acquire) ||
-             closed_.load(std::memory_order_acquire)) {
+        if (closed_.load(std::memory_order_acquire)) {
             return std::make_error_code(std::errc::not_connected);
         }
         // Parse the frame's id (responses have one) so we can route
@@ -190,8 +192,8 @@ public:
     }
 
     [[nodiscard]] bool is_open() const noexcept override {
-        return running_.load(std::memory_order_acquire) &&
-              !closed_.load(std::memory_order_acquire);
+        // Open from construction until close(); see start() comment.
+        return !closed_.load(std::memory_order_acquire);
     }
 
     // Host-facing helpers ----------------------------------------------------
@@ -216,11 +218,14 @@ public:
             std::lock_guard<std::mutex> lk(pending_mu_);
             pending_.emplace(std::move(key), std::move(p));
         }
-        // Deliver under buffered_mu_ so a concurrent on_message setter
-        // either gets the frame replayed or fires on_message itself —
-        // exactly one of the two paths runs the user callback.
+        // Deliver under buffered_mu_ so the started_/buffered_/on_message_
+        // triple stays consistent against start() and on_message().
+        // started_ alone is the gate, not on_message_: the latter is
+        // wired by Session::Session before set_request_handler calls
+        // run, and dispatching during that window produces spurious
+        // "method not found" errors.
         std::lock_guard<std::mutex> lk(buffered_mu_);
-        if (on_message_) {
+        if (started_ && on_message_) {
             on_message_(std::move(raw));
         } else {
             buffered_.emplace_back(std::move(raw));
@@ -236,14 +241,14 @@ private:
         return std::string{};
     }
 
-    std::atomic<bool>                                            running_{false};
     std::atomic<bool>                                            closed_{false};
 
-    // Pre-callback buffer + the callback itself live under the same
-    // mutex, so the "is on_message_ set?" decision and the
-    // corresponding action (call vs. enqueue) cannot race with the
-    // setter.
+    // Pre-start buffer, the callback, and the started_ gate share a
+    // mutex so their three-way consistency is maintained across the
+    // setter (on_message), the gate flip (start), and the producer
+    // (deliver_request_or_notification).
     std::mutex                                                   buffered_mu_;
+    bool                                                         started_ = false;
     MessageCallback                                              on_message_;
     std::deque<std::string>                                      buffered_;
 
@@ -468,7 +473,8 @@ void HttpServerHost::start() {
                 res.set_content("handler timed out", "text/plain");
                 return;
             }
-            res.set_content(reply->get(), "application/json");
+            const auto body = reply->get();
+            res.set_content(body, "application/json");
         } catch (const std::exception& e) {
             res.status = 500;
             res.set_content(std::string{"handler error: "} + e.what(),

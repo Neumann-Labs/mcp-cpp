@@ -387,8 +387,6 @@ void HttpClientTransport::run_get_stream() noexcept {
 
         httplib::Result res;
         try {
-            // Use the dedicated GET client so we don't serialise
-            // with concurrent POSTs.
             res = impl_->client_get.Get(path_.c_str(), headers,
                 [&](const char* data, std::size_t n) {
                     if (closed_.load(std::memory_order_acquire)) return false;
