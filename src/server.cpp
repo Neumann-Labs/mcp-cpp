@@ -199,6 +199,33 @@ std::future<ListRootsResult> Server::list_roots() {
         });
 }
 
+std::future<ElicitResult>
+Server::elicit(ElicitRequestParams params) {
+    auto session = acquire_session();
+    if (!session) {
+        throw Error{error_code::internal_error,
+                    "Server::elicit: server is not running"};
+    }
+    auto inner = session->send_request(
+        std::string{method_elicitation_create},
+        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ElicitResult {
+            return inner.get().get<ElicitResult>();
+        });
+}
+
+std::error_code
+Server::notify_elicitation_complete(std::string elicitation_id) {
+    auto session = acquire_session();
+    if (!session) return std::make_error_code(std::errc::not_connected);
+    return session->send_notification(
+        std::string{method_notifications_elicitation_complete},
+        nlohmann::json(ElicitationCompleteNotificationParams{
+            .elicitation_id = std::move(elicitation_id),
+        }));
+}
+
 std::shared_ptr<Session> Server::acquire_session() const {
     std::lock_guard<std::mutex> lk(session_mu_);
     return session_;

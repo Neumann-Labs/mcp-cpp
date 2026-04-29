@@ -785,6 +785,75 @@ void from_json(const nlohmann::json& j, CompleteResult& r);
 
 inline constexpr std::string_view method_completion_complete = "completion/complete";
 
+// --------------------------------------------------------------------------
+// Elicitation (server → client: ask the user for input)
+// --------------------------------------------------------------------------
+//
+// Two modes: form (an in-band JSON-Schema-described form rendered by the
+// client) and url (an out-of-band browser navigation, with an optional
+// completion notification).
+//
+// The wire shape is a tagged-by-`mode` object: omitted/`form` means form
+// mode, `url` means URL mode. We model it as a variant so callers don't
+// have to inspect a discriminator field by hand.
+
+struct ElicitFormRequestParams {
+    /// Plain-text rationale for the request, shown to the user.
+    std::string    message;
+    /// JSON Schema describing the expected response. Per spec, restricted
+    /// to a flat object of primitive properties; we don't enforce that
+    /// here so applications can negotiate richer shapes when both sides
+    /// agree, but the basic SDK sticks to the spec.
+    nlohmann::json requested_schema;
+};
+void to_json(nlohmann::json& j, const ElicitFormRequestParams& p);
+void from_json(const nlohmann::json& j, ElicitFormRequestParams& p);
+
+struct ElicitUrlRequestParams {
+    std::string message;
+    /// HTTPS URL the user is asked to visit out-of-band.
+    std::string url;
+    /// Identifier the server uses to correlate later
+    /// `notifications/elicitation/complete` notifications.
+    std::string elicitation_id;
+};
+void to_json(nlohmann::json& j, const ElicitUrlRequestParams& p);
+void from_json(const nlohmann::json& j, ElicitUrlRequestParams& p);
+
+using ElicitRequestParams =
+    std::variant<ElicitFormRequestParams, ElicitUrlRequestParams>;
+void to_json(nlohmann::json& j, const ElicitRequestParams& p);
+void from_json(const nlohmann::json& j, ElicitRequestParams& p);
+
+enum class ElicitAction { accept, decline, cancel };
+void to_json(nlohmann::json& j, ElicitAction a);
+void from_json(const nlohmann::json& j, ElicitAction& a);
+
+struct ElicitResult {
+    ElicitAction                  action;
+    /// Form-mode only: the user's submission, conforming to the
+    /// server-supplied schema. Absent for decline/cancel and for URL
+    /// mode.
+    std::optional<nlohmann::json> content;
+};
+void to_json(nlohmann::json& j, const ElicitResult& r);
+void from_json(const nlohmann::json& j, ElicitResult& r);
+
+/// URL-mode out-of-band completion notification. Emitted by the server
+/// or relayed by the client once the out-of-band flow finishes — but
+/// the spec leaves precise emitter conventions open. The MCP SDK
+/// accepts the notification on either side.
+struct ElicitationCompleteNotificationParams {
+    std::string elicitation_id;
+};
+void to_json(nlohmann::json& j, const ElicitationCompleteNotificationParams& p);
+void from_json(const nlohmann::json& j, ElicitationCompleteNotificationParams& p);
+
+inline constexpr std::string_view method_elicitation_create
+    = "elicitation/create";
+inline constexpr std::string_view method_notifications_elicitation_complete
+    = "notifications/elicitation/complete";
+
 }  // namespace mcp
 
 // std::hash specialization so RequestId can key unordered containers.

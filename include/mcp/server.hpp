@@ -141,6 +141,22 @@ public:
     /// result. The client must declare the roots capability.
     [[nodiscard]] std::future<ListRootsResult> list_roots();
 
+    /// Send `elicitation/create` to the client and return a future for
+    /// the result. Pass either an `ElicitFormRequestParams` (in-band
+    /// form rendered by the client) or an `ElicitUrlRequestParams`
+    /// (out-of-band browser navigation; you can later poll the
+    /// `notifications/elicitation/complete` notification to learn the
+    /// flow finished). Same threading rule as `sample()`: must run on
+    /// the Session worker.
+    [[nodiscard]] std::future<ElicitResult>
+    elicit(ElicitRequestParams params);
+
+    /// Best-effort `notifications/elicitation/complete` from the server
+    /// side, used after a URL-mode elicitation finishes out of band.
+    /// Returns std::errc::not_connected if no session is bound.
+    std::error_code
+    notify_elicitation_complete(std::string elicitation_id);
+
     /// Register an autocompletion handler for prompt args or resource
     /// template URIs. The handler returns a list of candidate values.
     using CompletionHandler =

@@ -1198,4 +1198,90 @@ void from_json(const nlohmann::json& j, CompleteResult& r) {
     r.completion = j.at("completion").get<CompletionValues>();
 }
 
+// =====================================================================
+// Elicitation
+// =====================================================================
+
+void to_json(nlohmann::json& j, const ElicitFormRequestParams& p) {
+    j = nlohmann::json::object();
+    // mode is optional and defaults to "form"; we omit it to match the
+    // canonical wire form most servers and validators emit.
+    j["message"]         = p.message;
+    j["requestedSchema"] = p.requested_schema;
+}
+void from_json(const nlohmann::json& j, ElicitFormRequestParams& p) {
+    p.message          = require<std::string>(j, "message");
+    p.requested_schema = require<nlohmann::json>(j, "requestedSchema");
+}
+
+void to_json(nlohmann::json& j, const ElicitUrlRequestParams& p) {
+    j = nlohmann::json::object();
+    j["mode"]          = "url";
+    j["message"]       = p.message;
+    j["url"]           = p.url;
+    j["elicitationId"] = p.elicitation_id;
+}
+void from_json(const nlohmann::json& j, ElicitUrlRequestParams& p) {
+    p.message        = require<std::string>(j, "message");
+    p.url            = require<std::string>(j, "url");
+    p.elicitation_id = require<std::string>(j, "elicitationId");
+}
+
+void to_json(nlohmann::json& j, const ElicitRequestParams& p) {
+    std::visit([&](const auto& alt) { j = alt; }, p);
+}
+void from_json(const nlohmann::json& j, ElicitRequestParams& p) {
+    // Tag-by-`mode`: omitted/`form` ⇒ form mode, `url` ⇒ url mode.
+    // Anything else is an unknown mode; reject so a future spec
+    // extension doesn't silently fall through to form parsing.
+    std::string mode = "form";
+    if (auto it = j.find("mode"); it != j.end() && it->is_string()) {
+        mode = it->get<std::string>();
+    }
+    if (mode == "form") {
+        p = j.get<ElicitFormRequestParams>();
+    } else if (mode == "url") {
+        p = j.get<ElicitUrlRequestParams>();
+    } else {
+        throw Error(error_code::invalid_params,
+                    "elicitation/create: unknown mode \"" + mode + "\"");
+    }
+}
+
+void to_json(nlohmann::json& j, ElicitAction a) {
+    switch (a) {
+        case ElicitAction::accept:  j = "accept"; return;
+        case ElicitAction::decline: j = "decline"; return;
+        case ElicitAction::cancel:  j = "cancel"; return;
+    }
+    j = "cancel";  // unreachable; defensive default
+}
+void from_json(const nlohmann::json& j, ElicitAction& a) {
+    const auto s = j.get<std::string>();
+    if      (s == "accept")  a = ElicitAction::accept;
+    else if (s == "decline") a = ElicitAction::decline;
+    else if (s == "cancel")  a = ElicitAction::cancel;
+    else throw Error(error_code::invalid_params,
+                     "elicitation result: unknown action \"" + s + "\"");
+}
+
+void to_json(nlohmann::json& j, const ElicitResult& r) {
+    j = nlohmann::json::object();
+    j["action"] = r.action;
+    put_optional(j, "content", r.content);
+}
+void from_json(const nlohmann::json& j, ElicitResult& r) {
+    r.action = j.at("action").get<ElicitAction>();
+    take_optional_json(j, "content", r.content);
+}
+
+void to_json(nlohmann::json& j, const ElicitationCompleteNotificationParams& p) {
+    j = nlohmann::json::object();
+    j["elicitationId"] = p.elicitation_id;
+}
+void from_json(const nlohmann::json& j,
+               ElicitationCompleteNotificationParams& p) {
+    p.elicitation_id = require<std::string>(j, "elicitationId");
+}
+
 }  // namespace mcp

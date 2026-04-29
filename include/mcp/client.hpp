@@ -151,6 +151,21 @@ public:
     using RootsListHandler = std::function<ListRootsResult()>;
     void set_roots_list_handler(RootsListHandler handler);
 
+    /// Handler for `elicitation/create` requests from the server. Setting
+    /// this also advertises the `elicitation` capability (form+url) on
+    /// the next initialize(). Use set_client_capabilities() to declare a
+    /// narrower mode set.
+    using ElicitationHandler =
+        std::function<ElicitResult(const ElicitRequestParams&)>;
+    void set_elicitation_handler(ElicitationHandler handler);
+
+    /// Handler for `notifications/elicitation/complete` (URL-mode
+    /// completion). Receives the elicitation_id of the flow that
+    /// finished out of band. Pass nullptr to clear.
+    using ElicitationCompleteHandler =
+        std::function<void(std::string elicitation_id)>;
+    void set_elicitation_complete_handler(ElicitationCompleteHandler handler);
+
     /// `completion/complete` — ask the server for autocompletion
     /// suggestions.
     [[nodiscard]] std::future<CompleteResult>
@@ -190,6 +205,8 @@ private:
 
     SamplingHandler                             sampling_handler_;
     RootsListHandler                            roots_handler_;
+    ElicitationHandler                          elicitation_handler_;
+    ElicitationCompleteHandler                  elicitation_complete_handler_;
     std::optional<ClientCapabilities>           capabilities_override_;
     std::mutex                                  handlers_mu_;
 };

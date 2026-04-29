@@ -90,6 +90,15 @@ std::future<InitializeResult> Client::initialize() {
         } else {
             if (sampling_handler_) caps.sampling = SamplingCapability{};
             if (roots_handler_)    caps.roots    = RootsCapability{};
+            if (elicitation_handler_) {
+                ElicitationCapability ec;
+                // We accept both modes by default; an application that
+                // only renders form-mode can override via
+                // set_client_capabilities().
+                ec.form = nlohmann::json::object();
+                ec.url  = nlohmann::json::object();
+                caps.elicitation = std::move(ec);
+            }
         }
     }
     InitializeRequestParams params{
@@ -393,6 +402,65 @@ void Client::set_sampling_handler(SamplingHandler handler) {
             });
     } else {
         session->clear_request_handler(method);
+    }
+}
+
+void Client::set_elicitation_handler(ElicitationHandler handler) {
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
+    {
+        std::lock_guard<std::mutex> lk(handlers_mu_);
+        elicitation_handler_ = handler;
+    }
+    const std::string method{method_elicitation_create};
+    if (handler) {
+        session->set_request_handler(method,
+            [h = std::move(handler)](const nlohmann::json& params)
+                    -> nlohmann::json {
+                if (params.is_null()) {
+                    throw Error{error_code::invalid_params,
+                                "elicitation/create requires params"};
+                }
+                ElicitRequestParams parsed;
+                try {
+                    parsed = params.get<ElicitRequestParams>();
+                } catch (const Error&) {
+                    throw;
+                } catch (const std::exception& e) {
+                    throw Error{error_code::invalid_params,
+                                std::string{"invalid elicitation params: "}
+                                    + e.what()};
+                }
+                return h(parsed);
+            });
+    } else {
+        session->clear_request_handler(method);
+    }
+}
+
+void Client::set_elicitation_complete_handler(
+    ElicitationCompleteHandler handler) {
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
+    {
+        std::lock_guard<std::mutex> lk(handlers_mu_);
+        elicitation_complete_handler_ = handler;
+    }
+    const std::string method{method_notifications_elicitation_complete};
+    if (handler) {
+        session->set_notification_handler(method,
+            [h = std::move(handler)](const nlohmann::json& params) {
+                if (!params.is_object()) return;
+                ElicitationCompleteNotificationParams parsed;
+                try {
+                    parsed = params.get<ElicitationCompleteNotificationParams>();
+                } catch (...) {
+                    return;
+                }
+                h(std::move(parsed.elicitation_id));
+            });
+    } else {
+        session->set_notification_handler(method, nullptr);
     }
 }
 

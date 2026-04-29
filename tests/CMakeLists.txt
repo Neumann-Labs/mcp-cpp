@@ -21,6 +21,7 @@ target_sources(mcp_tests PRIVATE
     prompts_test.cpp
     utilities_test.cpp
     sampling_roots_completion_test.cpp
+    elicitation_test.cpp
     pagination_test.cpp
     audit_regression_test.cpp
 )
