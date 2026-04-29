@@ -9,6 +9,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,14 +35,32 @@ Server& Server::set_page_size(std::size_t n) {
 namespace {
 // Decode an offset cursor. Empty / missing cursor means start at 0.
 // Throws Error(invalid_params) on malformed cursors.
+//
+// The decode is strict: only ASCII digits, no sign character, no
+// leading/trailing whitespace, no overflow. std::stoull accepts "-1"
+// (silently wrapping to UINT64_MAX) and trailing junk like "1abc",
+// neither of which we want to treat as a valid offset.
 std::size_t decode_cursor(const std::optional<std::string>& cursor) {
     if (!cursor.has_value() || cursor->empty()) return 0;
-    try {
-        return static_cast<std::size_t>(std::stoull(*cursor));
-    } catch (const std::exception&) {
+    const auto& s = *cursor;
+    if (s.size() > 20) {  // longer than UINT64_MAX's decimal length
         throw Error{error_code::invalid_params,
-                    "invalid pagination cursor: " + *cursor};
+                    "invalid pagination cursor: " + s};
     }
+    std::uint64_t value = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9') {
+            throw Error{error_code::invalid_params,
+                        "invalid pagination cursor: " + s};
+        }
+        const std::uint64_t digit = static_cast<std::uint64_t>(c - '0');
+        if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10) {
+            throw Error{error_code::invalid_params,
+                        "invalid pagination cursor: " + s};
+        }
+        value = value * 10 + digit;
+    }
+    return static_cast<std::size_t>(value);
 }
 
 // Slice [items_begin, items_end) into a page. If page_size is 0 or

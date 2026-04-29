@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -1011,8 +1013,27 @@ void to_json(nlohmann::json& j, const CreateMessageRequestParams& p) {
     put_optional(j, "metadata",         p.metadata);
 }
 void from_json(const nlohmann::json& j, CreateMessageRequestParams& p) {
-    p.messages   = j.at("messages").get<std::vector<SamplingMessage>>();
-    p.max_tokens = require<std::int64_t>(j, "maxTokens");
+    p.messages = j.at("messages").get<std::vector<SamplingMessage>>();
+
+    // maxTokens: nlohmann silently clamps numeric overflow when extracting
+    // as int64_t, and accepts negative values. Validate strictly.
+    const auto& mt = j.at("maxTokens");
+    if (!mt.is_number_integer() && !mt.is_number_unsigned()) {
+        throw Error(error_code::invalid_params,
+                    "maxTokens must be an integer");
+    }
+    if (mt.is_number_integer() && mt.get<std::int64_t>() < 0) {
+        throw Error(error_code::invalid_params,
+                    "maxTokens must be non-negative");
+    }
+    if (mt.is_number_unsigned() &&
+        mt.get<std::uint64_t>() >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        throw Error(error_code::invalid_params,
+                    "maxTokens overflows int64");
+    }
+    p.max_tokens = mt.get<std::int64_t>();
+
     take_optional(j, "modelPreferences", p.model_preferences);
     take_optional(j, "systemPrompt",     p.system_prompt);
     take_optional(j, "includeContext",   p.include_context);

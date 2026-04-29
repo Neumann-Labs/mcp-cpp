@@ -241,6 +241,12 @@ void Session::handle_frame(std::string raw) {
     } catch (const Error& e) {
         MCP_LOG_WARN(std::string{"rejecting malformed JSON-RPC frame: "} + e.what());
         return;
+    } catch (const nlohmann::json::exception& e) {
+        // A from_json deeper in parse_message can throw a json type_error
+        // or out_of_range when fields are mistyped or missing. Treat
+        // those identically to a parse error and drop the frame.
+        MCP_LOG_WARN(std::string{"rejecting malformed JSON-RPC frame: "} + e.what());
+        return;
     }
 
     std::visit([&](auto&& m) {
@@ -298,6 +304,16 @@ void Session::handle_request(JsonRpcRequest req) {
             resp.outcome = handler(params_in);
         } catch (const Error& e) {
             resp.outcome = e.object();
+        } catch (const nlohmann::json::exception& e) {
+            // A nlohmann json type/range error escaping a handler almost
+            // always means the inbound params were the wrong shape;
+            // map to invalid_params rather than internal_error so
+            // clients can fix their request.
+            resp.outcome = ErrorObject{
+                error_code::invalid_params,
+                std::string{"invalid params: "} + e.what(),
+                {},
+            };
         } catch (const std::exception& e) {
             resp.outcome = ErrorObject{
                 error_code::internal_error,

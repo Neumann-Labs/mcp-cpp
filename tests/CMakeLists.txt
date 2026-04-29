@@ -22,6 +22,7 @@ target_sources(mcp_tests PRIVATE
     utilities_test.cpp
     sampling_roots_completion_test.cpp
     pagination_test.cpp
+    audit_regression_test.cpp
 )
 
 # The calculator_server subprocess test only builds in if the example is
