@@ -47,8 +47,9 @@ agents, native applications, and high-throughput servers.
 | Pagination | ✅ | ✅ | configurable page size |
 | `stdio` transport | ✅ | ✅ | spec-correct framing |
 | Streamable HTTP transport | ✅ | ✅ | POST + SSE GET stream + session ids |
-| Tasks (2025-11-25 primitive) | 🚧 | 🚧 | post-0.1 |
-| Elicitation, OAuth 2.1 | 🚧 | 🚧 | post-0.1 |
+| Tasks (`tasks/get`/`result`/`list`/`cancel`, status notifications) | ✅ | ✅ | augment `tools/call` via `task` field; spec 2025-11-25 |
+| Elicitation (`elicitation/create`, form + url modes) | ✅ initiator | ✅ responder | spec 2025-11-25 |
+| OAuth 2.1 authorization (HTTP) | ✅ | ✅ | bearer + RFC 9728 protected resource metadata |
 
 ## Quick start
 

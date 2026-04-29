@@ -60,3 +60,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     new `MCP_ENABLE_HTTP` CMake option (default ON).
   - `examples/http_calculator_server`: stdio calculator's twin,
     exposed over HTTP.
+- **Elicitation** (2025-11-25): server-initiated `elicitation/create`
+  requests for in-band JSON-Schema-described forms or out-of-band
+  URL-mode flows, plus `notifications/elicitation/complete` for
+  url-mode completion signals.
+  - Wire types: `ElicitFormRequestParams`, `ElicitUrlRequestParams`,
+    the tagged variant `ElicitRequestParams`, the `ElicitAction`
+    enum (`accept`/`decline`/`cancel`), `ElicitResult`, and
+    `ElicitationCompleteNotificationParams`.
+  - API: `Server::elicit(...)`, `Server::notify_elicitation_complete(id)`,
+    `Client::set_elicitation_handler(...)`,
+    `Client::set_elicitation_complete_handler(...)`. Setting an
+    elicitation handler auto-advertises the
+    `elicitation: {form: {}, url: {}}` capability on the next
+    `initialize()`.
+- **Tasks** (2025-11-25): long-running tool calls. Opt in by passing
+  a `task` augmentation in `tools/call`'s params; the receiver
+  returns a `CreateTaskResult` envelope right away and runs the
+  handler async, with the actual `CallToolResult` retrieved via
+  `tasks/result`.
+  - Methods: `tasks/get`, `tasks/result`, `tasks/list`, `tasks/cancel`;
+    notification: `notifications/tasks/status`. State machine:
+    `working`/`input_required` → terminal `completed`/`failed`/
+    `cancelled`. Per spec, results carry an
+    `_meta["io.modelcontextprotocol/related-task"]` envelope.
+  - Server: `Server::enable_tasks(default_ttl_ms?)` opts the server in
+    and advertises `tasks: { list:{}, cancel:{}, requests:{ tools:{
+    call:{} }}}`. A private thread-safe `detail::TaskStore` owns the
+    in-flight bookkeeping; the Server destructor blocks on
+    `shutdown()` until every detached worker has returned, so
+    long-running tasks never outlive their store.
+  - Client: `call_tool_as_task(...)`, `task_get`, `task_result`,
+    `task_list`, `task_cancel`, `set_task_status_handler(...)`.
+- **OAuth 2.1 authorization** on the HTTP transport (RFC 6750
+  bearer + RFC 9728 protected resource metadata):
+  - Server: `HttpServerHost::Options::bearer_validator` gates every
+    POST/GET/DELETE on `Authorization: Bearer <token>`. Missing /
+    invalid token ⇒ 401 with `WWW-Authenticate: Bearer realm="...",
+    resource_metadata="..."`. `Options::resource_metadata` /
+    `resource_metadata_url` publish the discovery document at
+    `/.well-known/oauth-protected-resource[/path]`.
+  - Client: `HttpClientTransport::Options::access_token` injects the
+    Authorization header on every outbound request. The
+    `on_unauthorized(status, www_authenticate)` callback surfaces
+    challenges so the application can drive its OAuth flow.
+- 31 new tests (9 elicitation + 14 tasks + 8 OAuth), bringing the
+  suite to 182 tests. Full matrix CI green on all three primitives.
