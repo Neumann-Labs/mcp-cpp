@@ -29,21 +29,39 @@ void Client::connect(std::unique_ptr<Transport> transport) {
         throw Error{error_code::internal_error, "Client::connect: transport is null"};
     }
     disconnect();
-    session_ = std::make_unique<Session>(std::move(transport));
-    session_->start();
+    {
+        std::lock_guard<std::mutex> lk(session_mu_);
+        session_ = std::make_shared<Session>(std::move(transport));
+    }
+    // Start under the lock-acquired pointer, but don't hold the lock
+    // across start() — start spawns the read thread, which can run
+    // arbitrary user callbacks.
+    auto local = acquire_session();
+    if (local) local->start();
     connected_.store(true, std::memory_order_release);
 }
 
 void Client::disconnect() {
     if (!connected_.exchange(false, std::memory_order_acq_rel)) return;
-    if (session_) {
-        session_->close();
+    std::shared_ptr<Session> local;
+    {
+        std::lock_guard<std::mutex> lk(session_mu_);
+        local = std::move(session_);
         session_.reset();
     }
+    // close() + drop our reference outside the lock; concurrent
+    // call sites that took an earlier copy will keep the Session
+    // alive via shared_ptr count until they finish.
+    if (local) local->close();
     {
         std::lock_guard<std::mutex> lk(server_mu_);
         server_.reset();
     }
+}
+
+std::shared_ptr<Session> Client::acquire_session() const {
+    std::lock_guard<std::mutex> lk(session_mu_);
+    return session_;
 }
 
 bool Client::is_connected() const noexcept {
@@ -60,7 +78,8 @@ std::optional<InitializeResult> Client::server() const {
 // =====================================================================
 
 std::future<InitializeResult> Client::initialize() {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
     ClientCapabilities caps;
@@ -79,7 +98,6 @@ std::future<InitializeResult> Client::initialize() {
         .client_info      = client_info_,
     };
 
-    auto* session = session_.get();
     return std::async(std::launch::async,
         [this, session, payload = nlohmann::json(params)]() -> InitializeResult {
             auto raw = session->send_request(std::string{method_initialize},
@@ -106,11 +124,12 @@ std::future<InitializeResult> Client::initialize() {
 
 std::future<ListToolsResult>
 Client::list_tools(std::optional<std::string> cursor) {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
     ListToolsRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session_->send_request(std::string{method_tools_list},
+    auto inner = session->send_request(std::string{method_tools_list},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ListToolsResult {
@@ -120,7 +139,8 @@ Client::list_tools(std::optional<std::string> cursor) {
 
 std::future<CallToolResult>
 Client::call_tool(std::string name, nlohmann::json arguments) {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
     CallToolRequestParams params{
@@ -128,7 +148,7 @@ Client::call_tool(std::string name, nlohmann::json arguments) {
         .arguments = arguments.is_null() ? std::nullopt
                                          : std::optional<nlohmann::json>(std::move(arguments)),
     };
-    auto inner = session_->send_request(std::string{method_tools_call},
+    auto inner = session->send_request(std::string{method_tools_call},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> CallToolResult {
@@ -142,9 +162,10 @@ Client::call_tool(std::string name, nlohmann::json arguments) {
 
 std::future<ListResourcesResult>
 Client::list_resources(std::optional<std::string> cursor) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     ListResourcesRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session_->send_request(std::string{method_resources_list},
+    auto inner = session->send_request(std::string{method_resources_list},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ListResourcesResult {
@@ -154,9 +175,10 @@ Client::list_resources(std::optional<std::string> cursor) {
 
 std::future<ListResourceTemplatesResult>
 Client::list_resource_templates(std::optional<std::string> cursor) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     ListResourceTemplatesRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session_->send_request(std::string{method_resources_templates_list},
+    auto inner = session->send_request(std::string{method_resources_templates_list},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ListResourceTemplatesResult {
@@ -166,9 +188,10 @@ Client::list_resource_templates(std::optional<std::string> cursor) {
 
 std::future<ReadResourceResult>
 Client::read_resource(std::string uri) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     ReadResourceRequestParams params{.uri = std::move(uri)};
-    auto inner = session_->send_request(std::string{method_resources_read},
+    auto inner = session->send_request(std::string{method_resources_read},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ReadResourceResult {
@@ -178,9 +201,10 @@ Client::read_resource(std::string uri) {
 
 std::future<void>
 Client::subscribe(std::string uri) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     SubscribeRequestParams params{.uri = std::move(uri)};
-    auto inner = session_->send_request(std::string{method_resources_subscribe},
+    auto inner = session->send_request(std::string{method_resources_subscribe},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable { (void)inner.get(); });
@@ -188,36 +212,39 @@ Client::subscribe(std::string uri) {
 
 std::future<void>
 Client::unsubscribe(std::string uri) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     UnsubscribeRequestParams params{.uri = std::move(uri)};
-    auto inner = session_->send_request(std::string{method_resources_unsubscribe},
+    auto inner = session->send_request(std::string{method_resources_unsubscribe},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable { (void)inner.get(); });
 }
 
 void Client::set_resource_updated_handler(ResourceUpdatedHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     const std::string method{method_notifications_resources_updated};
     if (handler) {
-        session_->set_notification_handler(method,
+        session->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) {
                 if (params.is_null()) return;
                 h(params.get<ResourceUpdatedNotificationParams>());
             });
     } else {
-        session_->clear_notification_handler(method);
+        session->clear_notification_handler(method);
     }
 }
 
 void Client::set_resources_list_changed_handler(ListChangedHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     const std::string method{method_notifications_resources_list_changed};
     if (handler) {
-        session_->set_notification_handler(method,
+        session->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json&) { h(); });
     } else {
-        session_->clear_notification_handler(method);
+        session->clear_notification_handler(method);
     }
 }
 
@@ -227,9 +254,10 @@ void Client::set_resources_list_changed_handler(ListChangedHandler handler) {
 
 std::future<ListPromptsResult>
 Client::list_prompts(std::optional<std::string> cursor) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     ListPromptsRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session_->send_request(std::string{method_prompts_list},
+    auto inner = session->send_request(std::string{method_prompts_list},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ListPromptsResult {
@@ -240,12 +268,13 @@ Client::list_prompts(std::optional<std::string> cursor) {
 std::future<GetPromptResult>
 Client::get_prompt(std::string name,
                    std::optional<std::unordered_map<std::string, std::string>> arguments) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     GetPromptRequestParams params{
         .name      = std::move(name),
         .arguments = std::move(arguments),
     };
-    auto inner = session_->send_request(std::string{method_prompts_get},
+    auto inner = session->send_request(std::string{method_prompts_get},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> GetPromptResult {
@@ -254,13 +283,14 @@ Client::get_prompt(std::string name,
 }
 
 void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     const std::string method{method_notifications_prompts_list_changed};
     if (handler) {
-        session_->set_notification_handler(method,
+        session->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json&) { h(); });
     } else {
-        session_->clear_notification_handler(method);
+        session->clear_notification_handler(method);
     }
 }
 
@@ -270,21 +300,23 @@ void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
 
 std::error_code Client::cancel_request(RequestId request_id,
                                        std::optional<std::string> reason) {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
     CancelledNotificationParams params{
         .request_id = std::move(request_id),
         .reason     = std::move(reason),
     };
-    return session_->send_notification(
+    return session->send_notification(
         std::string{method_notifications_cancelled},
         nlohmann::json(params));
 }
 
 std::future<void> Client::ping() {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
-    auto inner = session_->send_request(std::string{method_ping}, nullptr);
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
+    auto inner = session->send_request(std::string{method_ping}, nullptr);
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable {
             (void)inner.get();
@@ -292,39 +324,42 @@ std::future<void> Client::ping() {
 }
 
 std::future<void> Client::set_log_level(LoggingLevel level) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     SetLevelRequestParams params{.level = level};
-    auto inner = session_->send_request(std::string{method_logging_set_level},
+    auto inner = session->send_request(std::string{method_logging_set_level},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable { (void)inner.get(); });
 }
 
 void Client::set_log_message_handler(LogMessageHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     const std::string method{method_notifications_message};
     if (handler) {
-        session_->set_notification_handler(method,
+        session->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) {
                 if (params.is_null()) return;
                 h(params.get<LoggingMessageNotificationParams>());
             });
     } else {
-        session_->clear_notification_handler(method);
+        session->clear_notification_handler(method);
     }
 }
 
 void Client::set_progress_handler(ProgressHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     const std::string method{method_notifications_progress};
     if (handler) {
-        session_->set_notification_handler(method,
+        session->set_notification_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) {
                 if (params.is_null()) return;
                 h(params.get<ProgressNotificationParams>());
             });
     } else {
-        session_->clear_notification_handler(method);
+        session->clear_notification_handler(method);
     }
 }
 
@@ -333,14 +368,15 @@ void Client::set_progress_handler(ProgressHandler handler) {
 // =====================================================================
 
 void Client::set_sampling_handler(SamplingHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     {
         std::lock_guard<std::mutex> lk(handlers_mu_);
         sampling_handler_ = handler;
     }
     const std::string method{method_sampling_create_message};
     if (handler) {
-        session_->set_request_handler(method,
+        session->set_request_handler(method,
             [h = std::move(handler)](const nlohmann::json& params) -> nlohmann::json {
                 if (params.is_null()) {
                     throw Error{error_code::invalid_params,
@@ -356,24 +392,25 @@ void Client::set_sampling_handler(SamplingHandler handler) {
                 return h(parsed);
             });
     } else {
-        session_->clear_request_handler(method);
+        session->clear_request_handler(method);
     }
 }
 
 void Client::set_roots_list_handler(RootsListHandler handler) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     {
         std::lock_guard<std::mutex> lk(handlers_mu_);
         roots_handler_ = handler;
     }
     const std::string method{method_roots_list};
     if (handler) {
-        session_->set_request_handler(method,
+        session->set_request_handler(method,
             [h = std::move(handler)](const nlohmann::json&) -> nlohmann::json {
                 return h();
             });
     } else {
-        session_->clear_request_handler(method);
+        session->clear_request_handler(method);
     }
 }
 
@@ -381,13 +418,14 @@ std::future<CompleteResult>
 Client::complete(CompletionReference reference,
                  CompleteArgument    argument,
                  std::optional<std::unordered_map<std::string, std::string>> context_arguments) {
-    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
     CompleteRequestParams params{
         .reference         = std::move(reference),
         .argument          = std::move(argument),
         .context_arguments = std::move(context_arguments),
     };
-    auto inner = session_->send_request(std::string{method_completion_complete},
+    auto inner = session->send_request(std::string{method_completion_complete},
                                         nlohmann::json(params));
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> CompleteResult {
@@ -401,10 +439,11 @@ void Client::set_client_capabilities(ClientCapabilities caps) {
 }
 
 std::error_code Client::notify_roots_list_changed() {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         return std::make_error_code(std::errc::not_connected);
     }
-    return session_->send_notification(
+    return session->send_notification(
         std::string{method_notifications_roots_list_changed});
 }
 

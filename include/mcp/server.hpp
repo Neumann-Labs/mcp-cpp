@@ -210,7 +210,14 @@ private:
     CompletionHandler                              completion_handler_;
     std::mutex                                     completion_mu_;
 
-    std::unique_ptr<Session>                    session_;
+    /// Acquire a strong reference to the live Session; returns empty
+    /// when run() has not started or has already returned. Lets
+    /// log/sample/list_roots/etc. be called from any thread without
+    /// racing with the run() teardown.
+    [[nodiscard]] std::shared_ptr<Session> acquire_session() const;
+
+    std::shared_ptr<Session>                    session_;
+    mutable std::mutex                          session_mu_;
     std::atomic<bool>                           initialized_{false};
     std::atomic<bool>                           stop_requested_{false};
     std::mutex                                  stop_mu_;

@@ -130,6 +130,25 @@ void Session::close() {
     bool expected = false;
     const bool first = closed_.compare_exchange_strong(expected, true,
                                                        std::memory_order_acq_rel);
+
+    // Cancel pending request promises so any worker awaiting a future
+    // (e.g. server.sample()) unblocks and the worker can return.
+    cancel_all_pending(ErrorObject{
+        error_code::internal_error, "session closed", {},
+    });
+
+    // Wait for in-flight request workers to finish before we close
+    // the transport. Workers may still be writing their final
+    // responses to stdout, and closing the transport here would turn
+    // those writes into "not_connected" errors.
+    {
+        std::unique_lock<std::mutex> lk(workers_mu_);
+        workers_cv_.wait(lk, [this] { return workers_running_ == 0; });
+    }
+
+    // Now actually shut down the transport. Only the first close()
+    // does this; subsequent calls (e.g. from ~Session) ride through
+    // the join-and-fire path the transport already provides.
     if (first && transport_) transport_->close();
 
     {
@@ -137,17 +156,6 @@ void Session::close() {
         timeout_cv_.notify_all();
     }
     if (timeout_thread_.joinable()) timeout_thread_.join();
-
-    cancel_all_pending(ErrorObject{
-        error_code::internal_error, "session closed", {},
-    });
-
-    // Wait for any in-flight request-dispatch workers to finish so
-    // they don't reach into destroyed members after we return.
-    {
-        std::unique_lock<std::mutex> lk(workers_mu_);
-        workers_cv_.wait(lk, [this] { return workers_running_ == 0; });
-    }
 }
 
 // =====================================================================
@@ -179,7 +187,36 @@ Session::send_request(std::string method,
 
     {
         std::lock_guard<std::mutex> lk(pending_mu_);
-        pending_.emplace(id, std::move(pending));
+        if (closed_.load(std::memory_order_acquire)) {
+            // Don't park a new entry on a closed session — its
+            // future would never resolve, since cancel_all_pending
+            // already drained the map. Surface the closed state
+            // directly through the future the caller is about to
+            // receive.
+            try {
+                throw Error{error_code::internal_error,
+                            "session closed"};
+            } catch (...) {
+                pending.promise.set_exception(std::current_exception());
+            }
+            return future;
+        }
+        auto [it, inserted] = pending_.try_emplace(id, std::move(pending));
+        if (!inserted) {
+            // The id space is monotonic per Session, so this is a
+            // sign of corruption (e.g. a Session object reused
+            // across logical connections). Fail fast rather than
+            // silently lose the caller's promise.
+            try {
+                throw Error{error_code::internal_error,
+                            "internal: duplicate request id " + id.canonical()};
+            } catch (...) {
+                std::promise<nlohmann::json> p;
+                auto fut = p.get_future();
+                p.set_exception(std::current_exception());
+                return fut;
+            }
+        }
         timeout_cv_.notify_all();
     }
 
@@ -416,23 +453,33 @@ void Session::timeout_loop() {
         }
         if (timeout_cv_.wait_until(lk, soonest) == std::cv_status::timeout) {
             const auto now = steady_clock::now();
-            // Sweep expired requests.
+            // Snapshot the expired promises under the lock, drop them
+            // out of the pending map, then release the lock before
+            // setting exceptions. Setting an exception on a promise
+            // can run user continuations, which we never want to do
+            // while holding our own mutex; and setting them on a
+            // local vector means we don't have to keep an iterator
+            // valid across cancel_all_pending swapping the map under
+            // us.
+            std::vector<std::promise<nlohmann::json>> expired;
             for (auto it = pending_.begin(); it != pending_.end(); ) {
                 if (it->second.deadline <= now) {
-                    auto promise = std::move(it->second.promise);
+                    expired.push_back(std::move(it->second.promise));
                     it = pending_.erase(it);
-                    lk.unlock();
-                    try {
-                        throw Error{error_code::internal_error,
-                                    "request timed out"};
-                    } catch (...) {
-                        promise.set_exception(std::current_exception());
-                    }
-                    lk.lock();
                 } else {
                     ++it;
                 }
             }
+            lk.unlock();
+            for (auto& promise : expired) {
+                try {
+                    throw Error{error_code::internal_error,
+                                "request timed out"};
+                } catch (...) {
+                    promise.set_exception(std::current_exception());
+                }
+            }
+            lk.lock();
         }
     }
 }

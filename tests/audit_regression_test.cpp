@@ -305,6 +305,104 @@ TEST(AuditRegression, ClientSetSamplingHandlerNullClears) {
 }
 
 // -------------------------------------------------------------------------
+// Concurrent disconnect during in-flight call (audit concurrency #1):
+// disconnect() must not race with another thread calling list_tools()
+// in a way that leaves the Session destroyed mid-use.
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, DisconnectRaceWithInFlightCallIsSafe) {
+    auto p = mcp::test::make_in_memory_pair();
+    std::shared_ptr<mcp::Server> server = std::make_shared<mcp::Server>(
+        mcp::Implementation{.name = "x", .version = "0"});
+    server->tool("slow", json{{"type", "object"}},
+        [](const json&) -> mcp::CallToolResult {
+            std::this_thread::sleep_for(50ms);
+            return {.content = { mcp::TextContent{.text = "ok"} }};
+        });
+    std::thread srv_thread([s = server, t = std::move(p.b)]() mutable {
+        s->run(std::move(t));
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "x", .version = "0"} };
+    client.connect(std::move(p.a));
+    (void)client.initialize().get();
+
+    // Fire the call in flight, then disconnect from the main thread.
+    auto fut = client.call_tool("slow");
+    std::this_thread::sleep_for(5ms);  // small window for the request to leave
+    client.disconnect();               // race here used to be UAF on session_
+
+    try { (void)fut.get(); }
+    catch (const mcp::Error&) {}        // either error or success — both OK
+    catch (const std::future_error&) {} // future broken_promise also OK
+
+    server->stop();
+    if (srv_thread.joinable()) srv_thread.join();
+}
+
+// -------------------------------------------------------------------------
+// send_request after close yields an immediately-failed future, never
+// orphans a promise (audit adversarial #8 / concurrency #send-after-close)
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, SendRequestAfterCloseFailsImmediately) {
+    auto p = mcp::test::make_in_memory_pair();
+    auto a = std::make_unique<mcp::Session>(std::move(p.a));
+    auto b = std::make_unique<mcp::Session>(std::move(p.b));
+    a->start();
+    b->start();
+    a->close();
+
+    auto fut = a->send_request("any-method", nullptr, 5s);
+    EXPECT_EQ(fut.wait_for(500ms), std::future_status::ready)
+        << "future from a closed session must resolve immediately, not orphan";
+    EXPECT_THROW({ (void)fut.get(); }, mcp::Error);
+
+    b->close();
+}
+
+// -------------------------------------------------------------------------
+// initialize TOCTOU: two concurrent initialize requests must not both
+// succeed (audit concurrency #6).
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, ConcurrentInitializeRequestsExactlyOneSucceeds) {
+    auto p = mcp::test::make_in_memory_pair();
+    std::shared_ptr<mcp::Server> server = std::make_shared<mcp::Server>(
+        mcp::Implementation{.name = "x", .version = "0"});
+    server->tool("noop", json{{"type", "object"}},
+        [](const json&) -> mcp::CallToolResult {
+            return {.content = { mcp::TextContent{.text = "ok"} }};
+        });
+    std::thread srv_thread([s = server, t = std::move(p.b)]() mutable {
+        s->run(std::move(t));
+    });
+
+    auto session = std::make_unique<mcp::Session>(std::move(p.a));
+    session->start();
+
+    nlohmann::json init_payload = mcp::InitializeRequestParams{
+        .protocol_version = std::string{mcp::kLatestProtocolVersion},
+        .capabilities     = {},
+        .client_info      = {.name = "tester", .version = "0"},
+    };
+
+    auto f1 = session->send_request(std::string{mcp::method_initialize}, init_payload, 5s);
+    auto f2 = session->send_request(std::string{mcp::method_initialize}, init_payload, 5s);
+
+    int succeeded = 0;
+    for (auto* f : {&f1, &f2}) {
+        try { (void)f->get(); ++succeeded; }
+        catch (const mcp::Error&) {}
+    }
+    EXPECT_EQ(succeeded, 1);
+
+    session->close();
+    server->stop();
+    if (srv_thread.joinable()) srv_thread.join();
+}
+
+// -------------------------------------------------------------------------
 // Stdio CR stripping (audit spec #6) — exercised via in-memory pipe
 // -------------------------------------------------------------------------
 

@@ -17,18 +17,26 @@
 #include "mcp/mcp.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace {
 
-std::atomic<mcp::Server*> g_server{nullptr};
+// Signal-safe shutdown: the signal handler only flips an atomic flag
+// (the only async-signal-safe primitives available to us are atomic
+// stores and write(2)). A small supervisor thread polls the flag and,
+// once set, calls Server::stop() from a regular thread context where
+// mutexes and condition variables are legal.
+std::atomic<mcp::Server*>      g_server{nullptr};
+std::atomic_flag               g_shutdown_requested = ATOMIC_FLAG_INIT;
 
 extern "C" void on_signal(int) {
-    if (auto* s = g_server.load(std::memory_order_acquire)) s->stop();
+    g_shutdown_requested.test_and_set(std::memory_order_release);
 }
 
 nlohmann::json arith_schema() {
@@ -104,8 +112,27 @@ int main() {
     std::signal(SIGINT,  on_signal);
     std::signal(SIGTERM, on_signal);
 
+    // Supervisor watches the signal flag and calls Server::stop() from
+    // a normal thread when a signal arrives; mutex/cv operations there
+    // are legal whereas calling them directly from the signal handler
+    // is undefined per POSIX.
+    std::atomic<bool> supervisor_done{false};
+    std::thread supervisor([&]() {
+        while (!supervisor_done.load(std::memory_order_acquire)) {
+            if (g_shutdown_requested.test(std::memory_order_acquire)) {
+                if (auto* s = g_server.load(std::memory_order_acquire)) s->stop();
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        }
+    });
+
     MCP_LOG_INFO("calculator_server starting");
     server.run(std::make_unique<mcp::StdioTransport>());
     MCP_LOG_INFO("calculator_server stopped");
+
+    // Wake the supervisor and join it before exiting.
+    supervisor_done.store(true, std::memory_order_release);
+    if (supervisor.joinable()) supervisor.join();
     return EXIT_SUCCESS;
 }

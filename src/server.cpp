@@ -140,13 +140,14 @@ bool Server::log(LoggingLevel               level,
     if (!logging_enabled_.load(std::memory_order_acquire)) return false;
     if (static_cast<int>(level) <
         static_cast<int>(log_level_.load(std::memory_order_acquire))) return false;
-    if (!session_) return false;
+    auto session = acquire_session();
+    if (!session) return false;
     LoggingMessageNotificationParams params{
         .level  = level,
         .logger = std::move(logger),
         .data   = std::move(data),
     };
-    auto ec = session_->send_notification(
+    auto ec = session->send_notification(
         std::string{method_notifications_message},
         nlohmann::json(params));
     return !ec;
@@ -156,25 +157,27 @@ void Server::report_progress(const ProgressToken&        token,
                              double                      progress,
                              std::optional<double>       total,
                              std::optional<std::string>  message) {
-    if (!session_) return;
+    auto session = acquire_session();
+    if (!session) return;
     ProgressNotificationParams params{
         .progress_token = token,
         .progress       = progress,
         .total          = total,
         .message        = std::move(message),
     };
-    (void)session_->send_notification(
+    (void)session->send_notification(
         std::string{method_notifications_progress},
         nlohmann::json(params));
 }
 
 std::future<CreateMessageResult>
 Server::sample(CreateMessageRequestParams params) {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         throw Error{error_code::internal_error,
                     "Server::sample: server is not running"};
     }
-    auto inner = session_->send_request(
+    auto inner = session->send_request(
         std::string{method_sampling_create_message},
         nlohmann::json(params));
     return std::async(std::launch::async,
@@ -184,15 +187,21 @@ Server::sample(CreateMessageRequestParams params) {
 }
 
 std::future<ListRootsResult> Server::list_roots() {
-    if (!session_) {
+    auto session = acquire_session();
+    if (!session) {
         throw Error{error_code::internal_error,
                     "Server::list_roots: server is not running"};
     }
-    auto inner = session_->send_request(std::string{method_roots_list}, nullptr);
+    auto inner = session->send_request(std::string{method_roots_list}, nullptr);
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ListRootsResult {
             return inner.get().get<ListRootsResult>();
         });
+}
+
+std::shared_ptr<Session> Server::acquire_session() const {
+    std::lock_guard<std::mutex> lk(session_mu_);
+    return session_;
 }
 
 Server& Server::enable_completion(CompletionHandler handler) {
@@ -206,15 +215,21 @@ Server& Server::enable_completion(CompletionHandler handler) {
 // =====================================================================
 
 nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
-    if (initialized_.load(std::memory_order_acquire)) {
-        throw Error{error_code::invalid_request, "already initialized"};
-    }
     InitializeRequestParams parsed;
     try {
         parsed = params.get<InitializeRequestParams>();
     } catch (const std::exception& e) {
         throw Error{error_code::invalid_params,
                     std::string{"invalid initialize params: "} + e.what()};
+    }
+
+    // Atomically claim the "initialized" slot — only the first concurrent
+    // initialize call may pass through, even if multiple arrived on
+    // different worker threads.
+    bool expected = false;
+    if (!initialized_.compare_exchange_strong(expected, true,
+                                              std::memory_order_acq_rel)) {
+        throw Error{error_code::invalid_request, "already initialized"};
     }
 
     // Per spec: if we don't support the client's protocol version, we
@@ -253,7 +268,6 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
         }
     }
 
-    initialized_.store(true, std::memory_order_release);
     return result;
 }
 
@@ -477,57 +491,64 @@ void Server::run(std::unique_ptr<Transport> transport) {
     initialized_.store(false, std::memory_order_release);
     stop_requested_.store(false, std::memory_order_release);
 
-    session_ = std::make_unique<Session>(std::move(transport));
+    auto local = std::make_shared<Session>(std::move(transport));
+    {
+        std::lock_guard<std::mutex> lk(session_mu_);
+        session_ = local;
+    }
 
-    session_->set_request_handler(std::string{method_initialize},
+    local->set_request_handler(std::string{method_initialize},
         [this](const nlohmann::json& p) { return handle_initialize(p); });
-    session_->set_request_handler(std::string{method_tools_list},
+    local->set_request_handler(std::string{method_tools_list},
         [this](const nlohmann::json& p) { return handle_list_tools(p); });
-    session_->set_request_handler(std::string{method_tools_call},
+    local->set_request_handler(std::string{method_tools_call},
         [this](const nlohmann::json& p) { return handle_call_tool(p); });
-    session_->set_request_handler(std::string{method_resources_list},
+    local->set_request_handler(std::string{method_resources_list},
         [this](const nlohmann::json& p) { return handle_list_resources(p); });
-    session_->set_request_handler(std::string{method_resources_templates_list},
+    local->set_request_handler(std::string{method_resources_templates_list},
         [this](const nlohmann::json& p) { return handle_list_resource_templates(p); });
-    session_->set_request_handler(std::string{method_resources_read},
+    local->set_request_handler(std::string{method_resources_read},
         [this](const nlohmann::json& p) { return handle_read_resource(p); });
-    session_->set_request_handler(std::string{method_prompts_list},
+    local->set_request_handler(std::string{method_prompts_list},
         [this](const nlohmann::json& p) { return handle_list_prompts(p); });
-    session_->set_request_handler(std::string{method_prompts_get},
+    local->set_request_handler(std::string{method_prompts_get},
         [this](const nlohmann::json& p) { return handle_get_prompt(p); });
-    session_->set_request_handler(std::string{method_ping},
+    local->set_request_handler(std::string{method_ping},
         [this](const nlohmann::json& p) { return handle_ping(p); });
-    session_->set_request_handler(std::string{method_logging_set_level},
+    local->set_request_handler(std::string{method_logging_set_level},
         [this](const nlohmann::json& p) { return handle_set_level(p); });
-    session_->set_request_handler(std::string{method_completion_complete},
+    local->set_request_handler(std::string{method_completion_complete},
         [this](const nlohmann::json& p) { return handle_complete(p); });
 
-    session_->set_notification_handler(std::string{method_notifications_cancelled},
+    local->set_notification_handler(std::string{method_notifications_cancelled},
         [this](const nlohmann::json& p) { handle_cancelled(p); });
 
-    session_->set_notification_handler(std::string{method_notifications_initialized},
+    local->set_notification_handler(std::string{method_notifications_initialized},
         [](const nlohmann::json&) {
             // Per the spec, this notification just confirms the client is
             // ready for normal operation. We simply log it.
             MCP_LOG_DEBUG("client sent notifications/initialized");
         });
 
-    session_->set_on_closed([this]() {
+    local->set_on_closed([this]() {
         std::lock_guard<std::mutex> lk(stop_mu_);
         stop_cv_.notify_all();
     });
 
-    session_->start();
+    local->start();
 
     {
         std::unique_lock<std::mutex> lk(stop_mu_);
-        stop_cv_.wait(lk, [this] {
+        stop_cv_.wait(lk, [this, &local] {
             return stop_requested_.load(std::memory_order_acquire) ||
-                   !session_->is_open();
+                   !local->is_open();
         });
     }
-    session_->close();
-    session_.reset();
+    local->close();
+    {
+        std::lock_guard<std::mutex> lk(session_mu_);
+        session_.reset();
+    }
 }
 
 void Server::stop() {

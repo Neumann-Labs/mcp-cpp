@@ -174,8 +174,16 @@ public:
     [[nodiscard]] std::optional<InitializeResult> server() const;
 
 private:
+    /// Acquire a strong reference to the live Session, or empty if
+    /// disconnected. Centralises the lock+copy that protects against
+    /// races with disconnect() resetting `session_`. Returns by value
+    /// so callers can drop the lock immediately and still keep the
+    /// session alive for the duration of their operation.
+    [[nodiscard]] std::shared_ptr<Session> acquire_session() const;
+
     Implementation                              client_info_;
-    std::unique_ptr<Session>                    session_;
+    std::shared_ptr<Session>                    session_;
+    mutable std::mutex                          session_mu_;
     std::optional<InitializeResult>             server_;
     mutable std::mutex                          server_mu_;
     std::atomic<bool>                           connected_{false};

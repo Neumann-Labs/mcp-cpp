@@ -119,6 +119,14 @@ void StdioTransport::close() {
         wakeup_write_fd_ = -1;
     }
 
+    // If a concurrent send() is in flight, wait for it to release the
+    // write lock before we return. The destructor immediately follows
+    // close() with fd cleanup (when owns_fds=true), so we must not let
+    // a sender be mid-write() on a fd we're about to close.
+    {
+        std::lock_guard<std::mutex> lk(write_mutex_);
+    }
+
     fire_close();
 }
 
@@ -250,7 +258,12 @@ void StdioTransport::deliver_error(std::error_code ec) noexcept {
 void StdioTransport::fire_close() noexcept {
     bool already = close_fired_.exchange(true, std::memory_order_acq_rel);
     if (already) return;
-    running_.store(false, std::memory_order_release);
+    // Deliberately do NOT flip `running_` here. EOF on the input
+    // doesn't close the output direction; outstanding worker handlers
+    // dispatched by the Session still need to write their responses.
+    // close() is the canonical place that disables sends. The
+    // on_close hook is purely informational — it lets the Session
+    // start its drain so close() can be called from the right place.
     if (!on_close_) return;
     try {
         on_close_();
