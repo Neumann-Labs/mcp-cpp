@@ -144,8 +144,10 @@ private:
     std::thread                   get_thread_;
 
     // Negotiated session id, captured from any inbound
-    // `Mcp-Session-Id` response header.
+    // `Mcp-Session-Id` response header. The GET worker waits on this
+    // cv until a session id has been negotiated (or close fires).
     mutable std::mutex            session_id_mu_;
+    std::condition_variable       session_id_cv_;
     std::optional<std::string>    session_id_;
 
     MessageCallback               on_message_;

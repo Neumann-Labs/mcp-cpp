@@ -184,6 +184,10 @@ void HttpClientTransport::close() {
         std::lock_guard<std::mutex> lk(out_mu_);
         out_cv_.notify_all();
     }
+    {
+        std::lock_guard<std::mutex> lk(session_id_mu_);
+        session_id_cv_.notify_all();
+    }
     if (impl_) {
         impl_->client_post.stop();
         impl_->client_get.stop();
@@ -310,11 +314,18 @@ void HttpClientTransport::process_send(std::string frame) {
         return;
     }
 
-    // Capture session id if the server set one.
+    // Capture session id if the server set one. Notify the GET
+    // worker so it can issue its first GET right away, instead of
+    // sleeping out a poll interval.
     if (auto it = res->headers.find("Mcp-Session-Id");
         it != res->headers.end() && !it->second.empty()) {
-        std::lock_guard<std::mutex> lk(session_id_mu_);
-        session_id_ = it->second;
+        bool first_set = false;
+        {
+            std::lock_guard<std::mutex> lk(session_id_mu_);
+            first_set = !session_id_.has_value();
+            session_id_ = it->second;
+        }
+        if (first_set) session_id_cv_.notify_all();
     }
 
     if (res->status == 202) {
@@ -349,20 +360,24 @@ void HttpClientTransport::process_send(std::string frame) {
 void HttpClientTransport::run_get_stream() noexcept {
     // The server's GET handler needs Mcp-Session-Id; it has no way
     // to associate an anonymous GET with the right session. So this
-    // worker waits until the first POST captures a session id before
-    // issuing the GET. Most tool flows hit initialize() first, which
-    // populates the id within milliseconds.
+    // worker waits on a cv for the session id to be negotiated by
+    // a POST response, and issues the GET as soon as it arrives —
+    // no polling latency between "initialize() returned" and "GET
+    // stream is open" (which a tool handler triggering server.sample()
+    // would otherwise race).
     while (started_.load(std::memory_order_acquire) &&
           !closed_.load(std::memory_order_acquire)) {
         std::optional<std::string> sid;
         {
-            std::lock_guard<std::mutex> lk(session_id_mu_);
+            std::unique_lock<std::mutex> lk(session_id_mu_);
+            session_id_cv_.wait(lk, [this] {
+                return session_id_.has_value() ||
+                       closed_.load(std::memory_order_acquire);
+            });
+            if (closed_.load(std::memory_order_acquire)) return;
             sid = session_id_;
         }
-        if (!sid.has_value()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds{20});
-            continue;
-        }
+        if (!sid.has_value()) continue;
         std::string buf;
         httplib::Headers headers;
         headers.emplace("Accept", "text/event-stream");
