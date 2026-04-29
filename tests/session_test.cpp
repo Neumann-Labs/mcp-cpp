@@ -18,6 +18,7 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -207,8 +208,13 @@ TEST(Session, ClosingCancelsPendingRequests) {
 
 TEST(Session, IdsForDifferentRequestsAreDistinct) {
     auto sp = make_session_pair();
+    // Two requests are dispatched on detached workers, so the handler
+    // can run on either thread first — the bookkeeping must be
+    // thread-safe.
+    std::mutex               ids_mu;
     std::vector<std::string> ids;
     sp.b->set_request_handler("tag", [&](const json& p) -> json {
+        std::lock_guard<std::mutex> lk(ids_mu);
         ids.push_back(p["id"].get<std::string>());
         return {};
     });
@@ -216,7 +222,10 @@ TEST(Session, IdsForDifferentRequestsAreDistinct) {
     auto f2 = sp.a->send_request("tag", json{{"id", "y"}}, 2s);
     f1.get();
     f2.get();
-    EXPECT_EQ(ids.size(), 2u);
+    {
+        std::lock_guard<std::mutex> lk(ids_mu);
+        EXPECT_EQ(ids.size(), 2u);
+    }
 
     sp.a->close();
     sp.b->close();
