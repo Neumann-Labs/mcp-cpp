@@ -240,6 +240,10 @@ TEST(HttpClientTransport, GetStreamReceivesServerInitiatedFrames) {
     mcp::HttpClientTransport::Options opts;
     opts.url = fake.url();
     opts.open_get_stream = true;
+    // The transport's GET worker waits for a session id before
+    // issuing the request (real servers want one); seed it for this
+    // unit test, where there is no initialize flow to negotiate one.
+    opts.session_id = "test-session";
     auto transport = std::make_unique<mcp::HttpClientTransport>(opts);
 
     std::promise<std::string> got;

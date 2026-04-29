@@ -93,6 +93,11 @@ public:
             try { throw Error{error_code::internal_error, "session closed"}; }
             catch (...) { p.set_exception(std::current_exception()); }
         }
+        // Wake any GET stream waiter so the http handler can return.
+        {
+            std::lock_guard<std::mutex> lk(get_mu_);
+            get_cv_.notify_all();
+        }
         if (on_close_) {
             try { on_close_(); }
             catch (const std::exception& e) {
@@ -101,6 +106,10 @@ public:
                 MCP_LOG_ERROR("HttpSessionTransport on_close threw a non-std exception");
             }
         }
+    }
+
+    [[nodiscard]] bool is_closed() const noexcept {
+        return closed_.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] std::error_code send(std::string_view frame) override {
@@ -138,11 +147,46 @@ public:
             return {};
         }
 
-        // Notification or server-initiated request. v1 has no GET
-        // stream; drop with a warning for now.
-        MCP_LOG_WARN("HttpSessionTransport: server-initiated frame dropped "
-                     "(GET stream not implemented in this build)");
+        // Notification or server-initiated request. Always buffer
+        // here: if a GET stream is already open, the GET handler
+        // picks it up immediately; if not, frames wait until the
+        // client opens its GET stream so a tool handler that fires
+        // server.sample() right after initialize doesn't lose its
+        // request to a startup race.
+        std::lock_guard<std::mutex> lk(get_mu_);
+        get_queue_.emplace_back(frame);
+        get_cv_.notify_all();
         return {};
+    }
+
+    // Host-facing: block until a frame is available for the GET
+    // stream, the close flag fires, or `until` is reached. Returns
+    // a frame if one was available, std::nullopt otherwise. Caller
+    // must call `enter_get_stream()` once before the first wait so
+    // outbound traffic stops being dropped.
+    void enter_get_stream() {
+        std::lock_guard<std::mutex> lk(get_mu_);
+        get_active_ = true;
+    }
+    void leave_get_stream() {
+        std::lock_guard<std::mutex> lk(get_mu_);
+        get_active_ = false;
+        // Don't drain the queue: another GET might be opened (with
+        // resumability). Phase 3e/3 ships without resumability so in
+        // practice we simply lose the queue's contents on disconnect.
+    }
+    template <typename Rep, typename Period>
+    std::optional<std::string>
+    wait_get_frame(std::chrono::duration<Rep, Period> timeout) {
+        std::unique_lock<std::mutex> lk(get_mu_);
+        if (!get_cv_.wait_for(lk, timeout, [&] {
+                return !get_queue_.empty()
+                    || closed_.load(std::memory_order_acquire);
+            })) return std::nullopt;
+        if (get_queue_.empty()) return std::nullopt;
+        std::string out = std::move(get_queue_.front());
+        get_queue_.pop_front();
+        return out;
     }
 
     [[nodiscard]] bool is_open() const noexcept override {
@@ -208,6 +252,14 @@ private:
 
     std::mutex                                                   pending_mu_;
     std::unordered_map<std::string, std::promise<std::string>>   pending_;
+
+    // GET-stream queue (server-initiated outbound traffic). Frames
+    // produced by `send()` while a GET stream is active are pushed
+    // here and consumed by the GET handler.
+    std::mutex                                                   get_mu_;
+    std::condition_variable                                      get_cv_;
+    std::deque<std::string>                                      get_queue_;
+    bool                                                         get_active_ = false;
 };
 
 // =====================================================================
@@ -424,10 +476,10 @@ void HttpServerHost::start() {
         }
     });
 
-    // GET: Streamable HTTP allows a long-lived SSE stream for
-    // server-initiated traffic. Phase 3e/2 doesn't implement it; per
-    // spec, returning 405 cleanly tells the client we don't offer
-    // the stream.
+    // GET: open a long-lived SSE stream for server-initiated
+    // traffic. The handler holds the connection open and emits one
+    // SSE event per frame the per-session transport produces while
+    // a request is pending or a notification fires.
     srv.Get(opts_.path, [host](const httplib::Request& req,
                                 httplib::Response&     res) {
         if (!origin_allowed(req, host->opts_.allowed_origins)) {
@@ -435,9 +487,56 @@ void HttpServerHost::start() {
             res.set_content("Origin not allowed", "text/plain");
             return;
         }
-        res.status = 405;
-        res.set_content("server-initiated stream not offered on this build",
-                        "text/plain");
+        // Resolve the session by Mcp-Session-Id. Without one we have
+        // no business holding open a stream — return 405 per spec
+        // ("server does not offer an SSE stream").
+        auto sid_it = req.headers.find("Mcp-Session-Id");
+        if (sid_it == req.headers.end() || sid_it->second.empty()) {
+            res.status = 405;
+            return;
+        }
+        std::shared_ptr<SessionContext> ctx;
+        {
+            std::lock_guard<std::mutex> lk(host->impl_->sessions_mu);
+            auto sit = host->impl_->sessions.find(sid_it->second);
+            if (sit != host->impl_->sessions.end()) ctx = sit->second;
+        }
+        if (!ctx) {
+            res.status = 404;
+            return;
+        }
+
+        auto transport = ctx->transport;
+        transport->enter_get_stream();
+
+        res.set_chunked_content_provider(
+            "text/event-stream",
+            [transport](std::size_t /*offset*/,
+                        httplib::DataSink& sink) -> bool {
+                if (transport->is_closed() || !sink.is_writable()) {
+                    sink.done();
+                    return false;
+                }
+                auto frame = transport->wait_get_frame(std::chrono::seconds{15});
+                if (!frame.has_value()) {
+                    if (!sink.write(":\n\n", 3)) {
+                        sink.done();
+                        return false;
+                    }
+                    return true;
+                }
+                std::string sse = "data: ";
+                sse.append(*frame);
+                sse.append("\n\n");
+                if (!sink.write(sse.data(), sse.size())) {
+                    sink.done();
+                    return false;
+                }
+                return true;
+            },
+            [transport](bool /*success*/) {
+                transport->leave_get_stream();
+            });
     });
 
     // DELETE: terminate session.
@@ -489,9 +588,11 @@ void HttpServerHost::stop() {
     if (!started_.load(std::memory_order_acquire)) return;
 
     if (impl_) {
-        impl_->http.stop();
-        if (impl_->listener.joinable()) impl_->listener.join();
-
+        // Close transports first so any in-flight handler (a GET
+        // SSE stream parked in wait_get_frame, a POST awaiting a
+        // sampling reply that will never arrive) can return. If we
+        // joined the listener before this, those in-flight handlers
+        // would block forever and the join would deadlock.
         std::unordered_map<std::string, std::shared_ptr<SessionContext>> drained;
         {
             std::lock_guard<std::mutex> lk(impl_->sessions_mu);
@@ -499,8 +600,14 @@ void HttpServerHost::stop() {
         }
         for (auto& [id, ctx] : drained) {
             ctx->server->stop();
-            if (ctx->run_thread.joinable()) ctx->run_thread.join();
             ctx->transport->close();
+        }
+
+        impl_->http.stop();
+        if (impl_->listener.joinable()) impl_->listener.join();
+
+        for (auto& [id, ctx] : drained) {
+            if (ctx->run_thread.joinable()) ctx->run_thread.join();
         }
     }
 }

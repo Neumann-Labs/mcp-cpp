@@ -125,11 +125,20 @@ private:
     std::atomic<bool> close_fired_{false};
 
     // Outbound queue: frames the application has handed us that are
-    // waiting to go out as POSTs. The worker thread drains.
+    // waiting to go out as POSTs. The worker thread drains, then
+    // dispatches each frame to its own short-lived sender thread so
+    // many POSTs can be in flight simultaneously without serialising
+    // (a long-blocked POST awaiting a server-initiated sampling
+    // round-trip would otherwise wedge later sends).
     std::mutex                    out_mu_;
     std::condition_variable       out_cv_;
     std::deque<std::string>       out_;
     std::thread                   worker_;
+
+    // Track in-flight per-send threads so close() can drain.
+    std::mutex                    inflight_mu_;
+    std::condition_variable       inflight_cv_;
+    int                           inflight_ = 0;
 
     // GET-stream worker (optional).
     std::thread                   get_thread_;

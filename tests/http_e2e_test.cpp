@@ -12,6 +12,7 @@
 #include "mcp/client.hpp"
 #include "mcp/http_client_transport.hpp"
 #include "mcp/http_server_host.hpp"
+#include "mcp/log.hpp"
 #include "mcp/protocol.hpp"
 
 #include <gtest/gtest.h>
@@ -112,6 +113,65 @@ TEST(HttpEndToEnd, OriginAllowlistRejectsCrossOrigin) {
 
     EXPECT_EQ(fut.wait_for(2s), std::future_status::ready);
     transport->close();
+    host.stop();
+}
+
+TEST(HttpEndToEnd, ServerInitiatedSamplingThroughGetStream) {
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "agent", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "127.0.0.1",
+            .path = "/mcp",
+        },
+        [](mcp::Server& s) {
+            // Tool that itself asks the client to sample. Exercises
+            // the full server-initiated → GET-stream → client →
+            // back-through-POST round trip.
+            s.tool("ask",
+                   json{{"type", "object"},
+                        {"properties", {{"q", {{"type", "string"}}}}}},
+                   [&s](const json& args) -> mcp::CallToolResult {
+                       const std::string q = args.value("q", "?");
+                       auto resp = s.sample(mcp::CreateMessageRequestParams{
+                           .messages = { mcp::SamplingMessage{
+                               .role    = mcp::Role::user,
+                               .content = { mcp::TextContent{.text = q} },
+                           }},
+                           .max_tokens = 100,
+                       }).get();
+                       return {.content = { mcp::TextContent{
+                           .text = "got: " + std::get<mcp::TextContent>(
+                                                resp.content.at(0)).text,
+                       }}};
+                   });
+        },
+    };
+    host.start();
+
+    mcp::HttpClientTransport::Options topts;
+    topts.url = "http://127.0.0.1:" + std::to_string(host.port()) + "/mcp";
+    topts.open_get_stream = true;  // required for sampling round-trip
+
+    mcp::Client client{ mcp::Implementation{.name = "tester", .version = "0"} };
+    client.connect(std::make_unique<mcp::HttpClientTransport>(topts));
+    client.set_sampling_handler(
+        [](const mcp::CreateMessageRequestParams& req) {
+            const std::string in =
+                std::get<mcp::TextContent>(req.messages.at(0).content.at(0)).text;
+            return mcp::CreateMessageResult{
+                .role    = mcp::Role::assistant,
+                .content = { mcp::TextContent{.text = "echo:" + in} },
+                .model   = "test-model",
+            };
+        });
+    (void)client.initialize().get();
+
+    auto out = client.call_tool("ask", json{{"q", "hello"}}).get();
+    ASSERT_FALSE(out.is_error.value_or(false));
+    EXPECT_EQ(std::get<mcp::TextContent>(out.content[0]).text,
+              "got: echo:hello");
+
+    client.disconnect();
     host.stop();
 }
 

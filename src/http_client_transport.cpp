@@ -25,9 +25,13 @@ namespace mcp {
 // =====================================================================
 
 struct HttpClientTransport::ClientImpl {
-    explicit ClientImpl(const std::string& base) : client(base) {}
-    httplib::Client client;
-    std::mutex      client_mu_;  // serialise concurrent uses of the cli
+    explicit ClientImpl(const std::string& base)
+        : client_post(base), client_get(base) {}
+    // cpp-httplib's Client is not safe to use concurrently on the
+    // same instance. We need a long-lived GET in parallel with
+    // many POSTs, so each direction has its own client.
+    httplib::Client client_post;
+    httplib::Client client_get;
 };
 
 namespace {
@@ -123,15 +127,21 @@ HttpClientTransport::HttpClientTransport(Options opts) : opts_(std::move(opts)) 
         session_id_ = *opts_.session_id;
     }
     impl_ = std::make_unique<ClientImpl>(scheme_host_port_);
-    impl_->client.set_connection_timeout(
-        std::chrono::duration_cast<std::chrono::seconds>(opts_.connect_timeout).count(),
-        (opts_.connect_timeout.count() % 1000) * 1000);
-    impl_->client.set_read_timeout(
-        std::chrono::duration_cast<std::chrono::seconds>(opts_.request_timeout).count(),
-        (opts_.request_timeout.count() % 1000) * 1000);
-    impl_->client.set_write_timeout(
-        std::chrono::duration_cast<std::chrono::seconds>(opts_.request_timeout).count(),
-        (opts_.request_timeout.count() % 1000) * 1000);
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        opts_.connect_timeout).count();
+    const auto usecs = (opts_.connect_timeout.count() % 1000) * 1000;
+    const auto rt_secs = std::chrono::duration_cast<std::chrono::seconds>(
+        opts_.request_timeout).count();
+    const auto rt_usecs = (opts_.request_timeout.count() % 1000) * 1000;
+
+    impl_->client_post.set_connection_timeout(secs, usecs);
+    impl_->client_post.set_read_timeout(rt_secs, rt_usecs);
+    impl_->client_post.set_write_timeout(rt_secs, rt_usecs);
+    impl_->client_get.set_connection_timeout(secs, usecs);
+    // GET stream stays open indefinitely; let it sit on the read
+    // path without timing out. Heartbeats keep it alive.
+    impl_->client_get.set_read_timeout(60 * 60, 0);
+    impl_->client_get.set_write_timeout(rt_secs, rt_usecs);
 }
 
 HttpClientTransport::~HttpClientTransport() { close(); }
@@ -174,11 +184,18 @@ void HttpClientTransport::close() {
         std::lock_guard<std::mutex> lk(out_mu_);
         out_cv_.notify_all();
     }
-    if (impl_) impl_->client.stop();  // wakes any in-flight HTTP call
+    if (impl_) {
+        impl_->client_post.stop();
+        impl_->client_get.stop();
+    }
 
     if (worker_.joinable()) worker_.join();
     if (get_thread_.joinable()) get_thread_.join();
 
+    {
+        std::unique_lock<std::mutex> lk(inflight_mu_);
+        inflight_cv_.wait(lk, [this] { return inflight_ == 0; });
+    }
     fire_close();
 }
 
@@ -231,6 +248,13 @@ std::error_code HttpClientTransport::send(std::string_view frame) {
 }
 
 void HttpClientTransport::worker_loop() {
+    // Each outbound frame is processed on its own thread so a slow
+    // POST (e.g. one held open by the server while it's awaiting a
+    // sampling reply that needs to come back through us) doesn't
+    // serialise with later sends. The host's POST handler can hold
+    // a request open for tens of seconds; if the worker were
+    // single-threaded, replying from inside that window would
+    // deadlock.
     while (true) {
         std::string frame;
         {
@@ -242,7 +266,16 @@ void HttpClientTransport::worker_loop() {
             frame = std::move(out_.front());
             out_.pop_front();
         }
-        process_send(std::move(frame));
+        {
+            std::lock_guard<std::mutex> lk(inflight_mu_);
+            ++inflight_;
+        }
+        std::thread([this, f = std::move(frame)]() mutable {
+            process_send(std::move(f));
+            std::lock_guard<std::mutex> lk(inflight_mu_);
+            --inflight_;
+            inflight_cv_.notify_all();
+        }).detach();
     }
 }
 
@@ -256,11 +289,22 @@ void HttpClientTransport::process_send(std::string frame) {
     }
     for (const auto& [k, v] : opts_.extra_headers) headers.emplace(k, v);
 
-    httplib::Result res;
-    {
-        std::lock_guard<std::mutex> lk(impl_->client_mu_);
-        res = impl_->client.Post(path_.c_str(), headers, frame, "application/json");
-    }
+    // Each send runs on its own thread (worker_loop dispatches), so
+    // we use a per-call Client instance — cpp-httplib's Client is not
+    // safe under concurrent use of the same instance, and using one
+    // shared instance under a mutex would re-introduce the
+    // serialisation deadlock we were just fighting.
+    httplib::Client cli{scheme_host_port_};
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        opts_.connect_timeout).count();
+    const auto usecs = (opts_.connect_timeout.count() % 1000) * 1000;
+    const auto rt_secs = std::chrono::duration_cast<std::chrono::seconds>(
+        opts_.request_timeout).count();
+    const auto rt_usecs = (opts_.request_timeout.count() % 1000) * 1000;
+    cli.set_connection_timeout(secs, usecs);
+    cli.set_read_timeout(rt_secs, rt_usecs);
+    cli.set_write_timeout(rt_secs, rt_usecs);
+    auto res = cli.Post(path_.c_str(), headers, frame, "application/json");
     if (!res) {
         deliver_error(std::make_error_code(std::errc::io_error));
         return;
@@ -303,22 +347,34 @@ void HttpClientTransport::process_send(std::string frame) {
 // =====================================================================
 
 void HttpClientTransport::run_get_stream() noexcept {
+    // The server's GET handler needs Mcp-Session-Id; it has no way
+    // to associate an anonymous GET with the right session. So this
+    // worker waits until the first POST captures a session id before
+    // issuing the GET. Most tool flows hit initialize() first, which
+    // populates the id within milliseconds.
     while (started_.load(std::memory_order_acquire) &&
           !closed_.load(std::memory_order_acquire)) {
+        std::optional<std::string> sid;
+        {
+            std::lock_guard<std::mutex> lk(session_id_mu_);
+            sid = session_id_;
+        }
+        if (!sid.has_value()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{20});
+            continue;
+        }
         std::string buf;
         httplib::Headers headers;
         headers.emplace("Accept", "text/event-stream");
         headers.emplace("MCP-Protocol-Version", opts_.protocol_version);
-        {
-            std::lock_guard<std::mutex> lk(session_id_mu_);
-            if (session_id_.has_value()) headers.emplace("Mcp-Session-Id", *session_id_);
-        }
+        headers.emplace("Mcp-Session-Id", *sid);
         for (const auto& [k, v] : opts_.extra_headers) headers.emplace(k, v);
 
         httplib::Result res;
         try {
-            std::lock_guard<std::mutex> lk(impl_->client_mu_);
-            res = impl_->client.Get(path_.c_str(), headers,
+            // Use the dedicated GET client so we don't serialise
+            // with concurrent POSTs.
+            res = impl_->client_get.Get(path_.c_str(), headers,
                 [&](const char* data, std::size_t n) {
                     if (closed_.load(std::memory_order_acquire)) return false;
                     buf.append(data, n);
