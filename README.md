@@ -156,6 +156,26 @@ Both `examples/http_calculator_server` (binds 127.0.0.1:8080 by
 default) and the stdio `examples/calculator_server` ship with the
 build.
 
+### A non-trivial demo: persistent notes for the assistant
+
+`examples/mcp_notes_server` is a SQLite + FTS5 scratchpad that gives
+Claude (or any MCP client) persistent, full-text-searchable memory
+across sessions. Plug it into Claude Desktop / Claude Code and ask
+"save my Postgres prod connection string under db.prod" — it's
+there next time you open a chat. Search "postgres" and you get a
+BM25-ranked snippet hit. Glob deletes go through the spec's
+elicitation primitive so the human gets a yes/no prompt before
+anything is wiped.
+
+Build it (`libsqlite3-dev` on Linux, ships with macOS):
+
+```
+cmake -S . -B build -DMCP_BUILD_EXAMPLES=ON
+cmake --build build --target mcp_notes_server
+```
+
+See `examples/mcp_notes_server/README.md` for the wire-up.
+
 ### Server-initiated LLM calls (sampling)
 
 A common agentic pattern is for a tool to ask the host application to make

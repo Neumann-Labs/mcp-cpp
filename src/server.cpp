@@ -546,6 +546,9 @@ Server& Server::tool(std::string                    name,
         .input_schema  = std::move(input_schema),
         .output_schema = std::move(output_schema),
         .annotations   = std::move(annotations),
+        .icons         = std::nullopt,
+        .execution     = std::nullopt,
+        .meta          = std::nullopt,
     };
     std::lock_guard<std::mutex> lk(tools_mu_);
     tools_[name] = ToolEntry{std::move(t), std::move(handler)};
@@ -558,7 +561,11 @@ Server& Server::tool(std::string    name,
                      ToolMetadata   meta) {
     Tool t{
         .name          = name,
+        .title         = std::nullopt,
+        .description   = std::nullopt,
         .input_schema  = std::move(input_schema),
+        .output_schema = std::nullopt,
+        .annotations   = std::nullopt,
         .icons         = std::move(meta.icons),
         .execution     = std::move(meta.execution),
         .meta          = std::move(meta.meta),
@@ -810,7 +817,11 @@ nlohmann::json Server::handle_list_tools(const nlohmann::json& params) {
         for (const auto& [name, entry] : tools_) all.push_back(entry.descriptor);
     }
     auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
-    return ListToolsResult{.tools = std::move(page), .next_cursor = std::move(next)};
+    return ListToolsResult{
+        .tools       = std::move(page),
+        .next_cursor = std::move(next),
+        .meta        = std::nullopt,
+    };
 }
 
 nlohmann::json Server::handle_call_tool(const nlohmann::json& params) {
@@ -929,7 +940,11 @@ nlohmann::json Server::handle_list_resources(const nlohmann::json& params) {
         for (const auto& [uri, entry] : resources_) all.push_back(entry.descriptor);
     }
     auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
-    return ListResourcesResult{.resources = std::move(page), .next_cursor = std::move(next)};
+    return ListResourcesResult{
+        .resources   = std::move(page),
+        .next_cursor = std::move(next),
+        .meta        = std::nullopt,
+    };
 }
 
 nlohmann::json Server::handle_list_resource_templates(const nlohmann::json& params) {
@@ -945,8 +960,11 @@ nlohmann::json Server::handle_list_resource_templates(const nlohmann::json& para
         all = resource_templates_;
     }
     auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
-    return ListResourceTemplatesResult{.resource_templates = std::move(page),
-                                       .next_cursor        = std::move(next)};
+    return ListResourceTemplatesResult{
+        .resource_templates = std::move(page),
+        .next_cursor        = std::move(next),
+        .meta               = std::nullopt,
+    };
 }
 
 nlohmann::json Server::handle_read_resource(const nlohmann::json& params) {
@@ -992,7 +1010,11 @@ nlohmann::json Server::handle_list_prompts(const nlohmann::json& params) {
         for (const auto& [name, entry] : prompts_) all.push_back(entry.descriptor);
     }
     auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
-    return ListPromptsResult{.prompts = std::move(page), .next_cursor = std::move(next)};
+    return ListPromptsResult{
+        .prompts     = std::move(page),
+        .next_cursor = std::move(next),
+        .meta        = std::nullopt,
+    };
 }
 
 nlohmann::json Server::handle_get_prompt(const nlohmann::json& params) {

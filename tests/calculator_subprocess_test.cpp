@@ -11,6 +11,8 @@
 #include "mcp/protocol.hpp"
 #include "mcp/stdio_transport.hpp"
 
+#include "test_binary_paths.hpp"
+
 #include <gtest/gtest.h>
 
 #include <fcntl.h>
@@ -49,8 +51,10 @@ struct Subprocess {
 
 // posix_spawn the calculator binary, returning pipes for stdio.
 std::unique_ptr<Subprocess> spawn_calculator() {
-    const char* path = std::getenv("MCP_CALCULATOR_SERVER");
-    if (!path) return nullptr;
+#if !defined(MCP_TEST_CALCULATOR_SERVER)
+    return nullptr;
+#else
+    const char* path = MCP_TEST_CALCULATOR_SERVER;
 
     int in_pipe[2];   // client writes to in_pipe[1], server reads in_pipe[0]
     int out_pipe[2];  // server writes to out_pipe[1], client reads out_pipe[0]
@@ -92,13 +96,17 @@ std::unique_ptr<Subprocess> spawn_calculator() {
     sp->read_fd   = out_pipe[0];
     sp->write_fd  = in_pipe[1];
     return sp;
+#endif
 }
 
 // -------------------------------------------------------------------------
 
 TEST(CalculatorSubprocess, EndToEnd) {
+#if !defined(MCP_TEST_CALCULATOR_SERVER)
+    GTEST_SKIP() << "calculator_server not built; skipping subprocess test";
+#else
     auto sp = spawn_calculator();
-    if (!sp) GTEST_SKIP() << "MCP_CALCULATOR_SERVER not set";
+    ASSERT_TRUE(sp) << "spawn failed";
 
     mcp::StdioTransport::Options opts{};
     opts.read_fd  = sp->read_fd;
@@ -129,6 +137,7 @@ TEST(CalculatorSubprocess, EndToEnd) {
     EXPECT_TRUE(div_out.is_error.value_or(false));
 
     client.disconnect();
+#endif
 }
 
 }  // namespace
