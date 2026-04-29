@@ -178,8 +178,16 @@ public:
     /// before garbage collection (0 / nullopt ⇒ unlimited). Per spec,
     /// the requester may also override the TTL per call.
     ///
-    /// Idempotent: calling twice replaces the prior settings.
-    Server& enable_tasks(std::optional<std::int64_t> default_ttl_ms = std::nullopt);
+    /// `max_concurrent` caps the number of in-flight task workers; a
+    /// task-augmented request received while at the cap is rejected
+    /// with `invalid_request` instead of spawning yet another thread
+    /// (DoS hardening). 0 = unlimited.
+    ///
+    /// Calling enable_tasks() takes effect at the next `run()`. Calling
+    /// it again replaces the configured limits. Calling it after
+    /// `run()` is in progress is racy and not supported.
+    Server& enable_tasks(std::optional<std::int64_t> default_ttl_ms = std::nullopt,
+                         std::size_t                 max_concurrent = 0);
 
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
@@ -255,6 +263,7 @@ private:
     /// error.
     std::unique_ptr<detail::TaskStore>             tasks_;
     std::optional<std::int64_t>                    tasks_default_ttl_ms_;
+    std::size_t                                    tasks_max_concurrent_{0};
 
     /// Acquire a strong reference to the live Session; returns empty
     /// when run() has not started or has already returned. Lets

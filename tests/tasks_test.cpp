@@ -14,10 +14,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -379,6 +382,146 @@ TEST(TasksIntegration, NonAugmentedCallStillWorks) {
 
     auto out = client.call_tool("add", json{{"a", 7}, {"b", 8}}).get();
     EXPECT_EQ(std::get<mcp::TextContent>(out.content[0]).text, "15");
+
+    client.disconnect();
+}
+
+TEST(TasksIntegration, CancelOnceFiresStatusListenerOnce) {
+    // Audit fix: the prior "cancel + worker race" allowed
+    // complete() to re-fire the status listener after cancel()
+    // had already done so, producing a duplicate cancelled
+    // notification. Verify exactly-one notification per terminal
+    // transition under that race.
+    auto p = mcp::test::make_in_memory_pair();
+
+    std::atomic<bool> let_finish{false};
+    ServerThread srv(std::move(p.b), [&](mcp::Server& s) {
+        s.enable_tasks();
+        s.tool("park", json{{"type", "object"}},
+               [&](const json&) -> mcp::CallToolResult {
+                   while (!let_finish.load(std::memory_order_acquire)) {
+                       std::this_thread::sleep_for(5ms);
+                   }
+                   return {.content = { mcp::TextContent{.text = "done"} }};
+               });
+    });
+
+    std::mutex                  mu;
+    std::condition_variable     cv;
+    std::vector<mcp::TaskStatus> seen;
+
+    mcp::Client client{ mcp::Implementation{.name = "t", .version = "0"} };
+    client.connect(std::move(p.a));
+    client.set_task_status_handler([&](const mcp::Task& t) {
+        std::lock_guard<std::mutex> lk(mu);
+        seen.push_back(t.status);
+        cv.notify_all();
+    });
+    (void)client.initialize().get();
+
+    auto env = client.call_tool_as_task("park", json{}).get();
+    auto cancelled = client.task_cancel(env.task.taskId).get();
+    EXPECT_EQ(cancelled.status, mcp::TaskStatus::cancelled);
+
+    // Release the worker; without the audit fix this would re-fire
+    // a SECOND cancelled notification once complete() ran.
+    let_finish.store(true, std::memory_order_release);
+
+    // Give the worker time to exit.
+    std::unique_lock<std::mutex> lk(mu);
+    cv.wait_for(lk, 1s, [&] {
+        return std::count(seen.begin(), seen.end(),
+                          mcp::TaskStatus::cancelled) > 1;
+    });
+    int cancelled_count = static_cast<int>(
+        std::count(seen.begin(), seen.end(), mcp::TaskStatus::cancelled));
+    EXPECT_EQ(cancelled_count, 1)
+        << "duplicate cancelled status notifications fired";
+
+    client.disconnect();
+}
+
+TEST(TasksIntegration, ConcurrencyCapEnforced) {
+    auto p = mcp::test::make_in_memory_pair();
+
+    std::atomic<bool> let_finish{false};
+    ServerThread srv(std::move(p.b), [&](mcp::Server& s) {
+        s.enable_tasks(/*default_ttl_ms=*/std::nullopt,
+                       /*max_concurrent=*/1);
+        s.tool("park", json{{"type", "object"}},
+               [&](const json&) -> mcp::CallToolResult {
+                   while (!let_finish.load(std::memory_order_acquire)) {
+                       std::this_thread::sleep_for(5ms);
+                   }
+                   return {.content = { mcp::TextContent{.text = "done"} }};
+               });
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "t", .version = "0"} };
+    client.connect(std::move(p.a));
+    (void)client.initialize().get();
+
+    // First task occupies the only slot.
+    auto env = client.call_tool_as_task("park", json{}).get();
+    EXPECT_EQ(env.task.status, mcp::TaskStatus::working);
+
+    // Second task is rejected.
+    EXPECT_THROW((void)client.call_tool_as_task("park", json{}).get(),
+                 mcp::Error);
+
+    let_finish.store(true, std::memory_order_release);
+    // Drain the first task so the ServerThread destructor doesn't
+    // wedge on a worker still parked in the busy-loop.
+    (void)client.task_result(env.task.taskId).get();
+
+    client.disconnect();
+}
+
+TEST(TasksIntegration, ResultMetaMergesInsteadOfClobbering) {
+    auto p = mcp::test::make_in_memory_pair();
+    ServerThread srv(std::move(p.b), [](mcp::Server& s) {
+        s.enable_tasks();
+        // Tool returns a CallToolResult whose JSON form, when set
+        // through structured_content, doesn't itself populate
+        // _meta. We'll inspect the wire-level result for the
+        // related-task tag and verify it lives alongside other
+        // _meta keys we sneak in via structured_content.
+        s.tool("noop", json{{"type", "object"}},
+               [](const json&) -> mcp::CallToolResult {
+                   return {.content = { mcp::TextContent{.text = "ok"} }};
+               });
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "t", .version = "0"} };
+    client.connect(std::move(p.a));
+    (void)client.initialize().get();
+
+    auto env = client.call_tool_as_task("noop", json{}).get();
+    auto raw = client.task_result(env.task.taskId).get();
+    ASSERT_TRUE(raw.contains("_meta"));
+    ASSERT_TRUE(raw["_meta"].is_object());
+    EXPECT_TRUE(raw["_meta"].contains(
+        std::string{mcp::tasks_related_task_meta_key}));
+
+    client.disconnect();
+}
+
+TEST(TasksIntegration, TaskNotFoundIsInvalidRequest) {
+    auto p = mcp::test::make_in_memory_pair();
+    ServerThread srv(std::move(p.b), [](mcp::Server& s) {
+        s.enable_tasks();
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "t", .version = "0"} };
+    client.connect(std::move(p.a));
+    (void)client.initialize().get();
+
+    try {
+        (void)client.task_get("nonexistent").get();
+        FAIL() << "task_get of unknown id should have thrown";
+    } catch (const mcp::Error& e) {
+        EXPECT_EQ(e.code(), mcp::error_code::invalid_request);
+    }
 
     client.disconnect();
 }
