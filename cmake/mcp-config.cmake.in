@@ -2,14 +2,12 @@
 
 include(CMakeFindDependencyMacro)
 
-# Only look for nlohmann_json if we're using the system version
-if(@MCP_USE_SYSTEM_DEPS@)
-  find_dependency(nlohmann_json CONFIG REQUIRED)
-endif()
-
-if(@MCP_USE_LIBCURL@)
-  find_dependency(CURL REQUIRED)
-endif()
+# nlohmann_json is a public dependency: we expose its target through
+# our PUBLIC link, so consumers must be able to import it. The library
+# is found either via the system package or via the config files that
+# nlohmann_json's own install rules dropped into our install prefix
+# when we used FetchContent (we set JSON_Install=ON for that).
+find_dependency(nlohmann_json CONFIG REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/mcp-targets.cmake")
 check_required_components(mcp)
