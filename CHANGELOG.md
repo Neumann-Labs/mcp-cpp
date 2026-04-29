@@ -68,12 +68,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the tagged variant `ElicitRequestParams`, the `ElicitAction`
     enum (`accept`/`decline`/`cancel`), `ElicitResult`, and
     `ElicitationCompleteNotificationParams`.
-  - API: `Server::elicit(...)`, `Server::notify_elicitation_complete(id)`,
+  - API: `Server::elicit(params, timeout?)`,
+    `Server::notify_elicitation_complete(id)`,
+    `Server::set_elicitation_complete_handler(...)`,
     `Client::set_elicitation_handler(...)`,
-    `Client::set_elicitation_complete_handler(...)`. Setting an
-    elicitation handler auto-advertises the
-    `elicitation: {form: {}, url: {}}` capability on the next
-    `initialize()`.
+    `Client::set_elicitation_complete_handler(...)`,
+    `Client::notify_elicitation_complete(id)`. Either side can
+    register a handler for the completion notification — the spec
+    lets either side emit it. Setting an elicitation handler
+    auto-advertises the `elicitation: {form: {}, url: {}}`
+    capability on the next `initialize()`;
+    `set_client_capabilities()` is a per-field override that lets
+    you narrow `elicitation` to form-only without dropping the
+    other handler-derived caps.
 - **Tasks** (2025-11-25): long-running tool calls. Opt in by passing
   a `task` augmentation in `tools/call`'s params; the receiver
   returns a `CreateTaskResult` envelope right away and runs the
@@ -84,25 +91,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `working`/`input_required` → terminal `completed`/`failed`/
     `cancelled`. Per spec, results carry an
     `_meta["io.modelcontextprotocol/related-task"]` envelope.
-  - Server: `Server::enable_tasks(default_ttl_ms?)` opts the server in
-    and advertises `tasks: { list:{}, cancel:{}, requests:{ tools:{
-    call:{} }}}`. A private thread-safe `detail::TaskStore` owns the
-    in-flight bookkeeping; the Server destructor blocks on
-    `shutdown()` until every detached worker has returned, so
-    long-running tasks never outlive their store.
+  - Server: `Server::enable_tasks(default_ttl_ms?, max_concurrent?)`
+    opts the server in and advertises `tasks: { list:{}, cancel:{},
+    requests:{ tools:{ call:{} }}}`. A private thread-safe
+    `detail::TaskStore` owns the in-flight bookkeeping; the Server
+    destructor blocks on `shutdown()` until every detached worker
+    has returned, so long-running tasks never outlive their store.
+    `max_concurrent` caps the number of in-flight task workers
+    (DoS hardening); `0` is unlimited.
   - Client: `call_tool_as_task(...)`, `task_get`, `task_result`,
     `task_list`, `task_cancel`, `set_task_status_handler(...)`.
+  - `tasks/result` returns a structured `data: { task: {...} }` on
+    long-poll timeout so the caller can re-poll without first
+    issuing a `tasks/get`.
 - **OAuth 2.1 authorization** on the HTTP transport (RFC 6750
   bearer + RFC 9728 protected resource metadata):
-  - Server: `HttpServerHost::Options::bearer_validator` gates every
-    POST/GET/DELETE on `Authorization: Bearer <token>`. Missing /
-    invalid token ⇒ 401 with `WWW-Authenticate: Bearer realm="...",
-    resource_metadata="..."`. `Options::resource_metadata` /
-    `resource_metadata_url` publish the discovery document at
-    `/.well-known/oauth-protected-resource[/path]`.
-  - Client: `HttpClientTransport::Options::access_token` injects the
-    Authorization header on every outbound request. The
-    `on_unauthorized(status, www_authenticate)` callback surfaces
-    challenges so the application can drive its OAuth flow.
-- 31 new tests (9 elicitation + 14 tasks + 8 OAuth), bringing the
-  suite to 182 tests. Full matrix CI green on all three primitives.
+  - Server: `HttpServerHost::Options::bearer_validator` returns a
+    `BearerOutcome` (allow / invalid_token / insufficient_scope +
+    required_scopes) and gates every POST/GET/DELETE on a
+    well-formed `Authorization: Bearer` header. The Bearer scheme
+    match is case-insensitive (RFC 7235 §2.1); empty / whitespace
+    tokens are rejected before the validator is invoked; multiple
+    `Authorization` headers ⇒ 400. `invalid_token` ⇒ 401 +
+    `WWW-Authenticate: Bearer realm="…", error="invalid_token"
+    [, resource_metadata="…"]`. `insufficient_scope` ⇒ 403 with
+    the required scopes echoed in the challenge. `auth_realm` and
+    `resource_metadata_url` are validated at `start()` to reject
+    CRLF / quoting characters that would smuggle an HTTP header.
+    `Options::resource_metadata` / `resource_metadata_url`
+    publish the discovery document at
+    `/.well-known/oauth-protected-resource[/path]` with
+    `Access-Control-Allow-Origin: *` so browser-based MCP
+    clients can run discovery cross-origin.
+  - Client: `HttpClientTransport::Options::access_token` seeds the
+    Authorization header. Use `set_access_token(...)` /
+    `access_token()` (mutex-guarded) to rotate the token at
+    runtime — typically from inside an `on_unauthorized` callback
+    after refreshing. `on_unauthorized(status, www_authenticate)`
+    fires on both POST and the long-lived GET stream when the
+    server returns 401/403; the GET stream then exits the
+    reconnect loop instead of busy-retrying.
+- 51 new tests across the three primitives (15 elicitation +
+  18 tasks + 17 OAuth), bringing the suite to 202 tests. Each
+  primitive went through an adversarial review pass; legitimate
+  findings closed in dedicated `fix(...)` commits before the
+  release.
