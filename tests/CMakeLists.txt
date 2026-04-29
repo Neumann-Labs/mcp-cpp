@@ -26,7 +26,10 @@ target_sources(mcp_tests PRIVATE
 )
 
 if(MCP_ENABLE_HTTP)
-    target_sources(mcp_tests PRIVATE http_client_transport_test.cpp)
+    target_sources(mcp_tests PRIVATE
+        http_client_transport_test.cpp
+        http_e2e_test.cpp
+    )
     target_link_libraries(mcp_tests PRIVATE httplib::httplib)
 endif()
 

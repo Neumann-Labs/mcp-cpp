@@ -8,5 +8,8 @@ target_sources(mcp PRIVATE
 )
 
 if(MCP_ENABLE_HTTP)
-    target_sources(mcp PRIVATE http_client_transport.cpp)
+    target_sources(mcp PRIVATE
+        http_client_transport.cpp
+        http_server_host.cpp
+    )
 endif()
