@@ -61,6 +61,41 @@ public:
     [[nodiscard]] std::future<CallToolResult>
     call_tool(std::string name, nlohmann::json arguments = nullptr);
 
+    /// `tools/call` with a `task` augmentation. The server returns a
+    /// `CreateTaskResult` envelope right away; the actual
+    /// `CallToolResult` is fetched later via `task_result()`. The
+    /// server must advertise the tasks capability for tools/call.
+    /// `ttl_ms` is the per-call retention override; nullopt uses the
+    /// server's default.
+    [[nodiscard]] std::future<CreateTaskResult>
+    call_tool_as_task(std::string                 name,
+                      nlohmann::json              arguments = nullptr,
+                      std::optional<std::int64_t> ttl_ms    = std::nullopt);
+
+    /// `tasks/get` — fetch the current envelope for a task.
+    [[nodiscard]] std::future<Task> task_get(std::string task_id);
+
+    /// `tasks/result` — block on the server until the task is
+    /// terminal, then return the underlying request's result as raw
+    /// JSON. Decode it as the appropriate result type (e.g.
+    /// `CallToolResult`) by calling `.get<T>()`.
+    [[nodiscard]] std::future<nlohmann::json>
+    task_result(std::string task_id);
+
+    /// `tasks/list` — paginated enumeration of all tasks the server
+    /// currently knows about.
+    [[nodiscard]] std::future<ListTasksResult>
+    task_list(std::optional<std::string> cursor = std::nullopt);
+
+    /// `tasks/cancel` — request cancellation. Returns the task
+    /// envelope post-transition (status: cancelled).
+    [[nodiscard]] std::future<Task> task_cancel(std::string task_id);
+
+    /// Hook for inbound `notifications/tasks/status`. The handler
+    /// receives the latest Task projection on every transition.
+    using TaskStatusHandler = std::function<void(const Task&)>;
+    void set_task_status_handler(TaskStatusHandler handler);
+
     /// `resources/list`. Cursor optional; pagination support is
     /// callee-side for Phase 2.
     [[nodiscard]] std::future<ListResourcesResult>
@@ -207,6 +242,7 @@ private:
     RootsListHandler                            roots_handler_;
     ElicitationHandler                          elicitation_handler_;
     ElicitationCompleteHandler                  elicitation_complete_handler_;
+    TaskStatusHandler                           task_status_handler_;
     std::optional<ClientCapabilities>           capabilities_override_;
     std::mutex                                  handlers_mu_;
 };

@@ -146,6 +146,40 @@ void to_json(nlohmann::json& j, const Implementation& i);
 void from_json(const nlohmann::json& j, Implementation& i);
 
 // --------------------------------------------------------------------------
+// Tasks: small capability/augmentation types (the primitive's own
+// methods + Task struct live further down). Hoisted so capabilities
+// and CallToolRequestParams below can hold std::optional<...> of them.
+// --------------------------------------------------------------------------
+
+struct TaskAugmentation {
+    /// Milliseconds the task is retained after creation. Empty / null
+    /// means unlimited (or implementation-defined retention).
+    std::optional<std::int64_t> ttl;
+};
+void to_json(nlohmann::json& j, const TaskAugmentation& t);
+void from_json(const nlohmann::json& j, TaskAugmentation& t);
+
+struct TasksRequestsCapability {
+    /// Per-namespace presence-only objects — e.g. `tools.call`,
+    /// `sampling.createMessage`, `elicitation.create`. Held as raw
+    /// json so a future spec extension (a new method) round-trips
+    /// without an SDK release.
+    std::optional<nlohmann::json> tools;
+    std::optional<nlohmann::json> sampling;
+    std::optional<nlohmann::json> elicitation;
+};
+void to_json(nlohmann::json& j, const TasksRequestsCapability& c);
+void from_json(const nlohmann::json& j, TasksRequestsCapability& c);
+
+struct TasksCapability {
+    std::optional<nlohmann::json>          list;
+    std::optional<nlohmann::json>          cancel;
+    std::optional<TasksRequestsCapability> requests;
+};
+void to_json(nlohmann::json& j, const TasksCapability& c);
+void from_json(const nlohmann::json& j, TasksCapability& c);
+
+// --------------------------------------------------------------------------
 // Capabilities
 // --------------------------------------------------------------------------
 
@@ -176,6 +210,9 @@ struct ClientCapabilities {
     std::optional<RootsCapability>       roots;
     std::optional<SamplingCapability>    sampling;
     std::optional<ElicitationCapability> elicitation;
+    /// 2025-11-25: client advertises which task-augmentable inbound
+    /// methods it can handle (e.g. sampling/createMessage as a task).
+    std::optional<TasksCapability>       tasks;
 };
 void to_json(nlohmann::json& j, const ClientCapabilities& c);
 void from_json(const nlohmann::json& j, ClientCapabilities& c);
@@ -206,6 +243,9 @@ struct ServerCapabilities {
     std::optional<PromptsCapability>   prompts;
     std::optional<ResourcesCapability> resources;
     std::optional<ToolsCapability>     tools;
+    /// 2025-11-25: which task-augmentable inbound methods the server
+    /// can handle (e.g. tools/call as a task), plus list/cancel.
+    std::optional<TasksCapability>     tasks;
 };
 void to_json(nlohmann::json& j, const ServerCapabilities& c);
 void from_json(const nlohmann::json& j, ServerCapabilities& c);
@@ -395,8 +435,12 @@ void to_json(nlohmann::json& j, const ListToolsResult& r);
 void from_json(const nlohmann::json& j, ListToolsResult& r);
 
 struct CallToolRequestParams {
-    std::string                   name;
-    std::optional<nlohmann::json> arguments;  // JSON object
+    std::string                       name;
+    std::optional<nlohmann::json>     arguments;  // JSON object
+    /// When set, the request is task-augmented: the receiver should
+    /// return a CreateTaskResult envelope and run the call async. The
+    /// final CallToolResult is fetched via `tasks/result`.
+    std::optional<TaskAugmentation>   task;
 };
 void to_json(nlohmann::json& j, const CallToolRequestParams& p);
 void from_json(const nlohmann::json& j, CallToolRequestParams& p);
@@ -853,6 +897,107 @@ inline constexpr std::string_view method_elicitation_create
     = "elicitation/create";
 inline constexpr std::string_view method_notifications_elicitation_complete
     = "notifications/elicitation/complete";
+
+// --------------------------------------------------------------------------
+// Tasks (long-running operations)
+// --------------------------------------------------------------------------
+//
+// A task primitive lets a request that would otherwise be synchronous
+// (`tools/call`, `sampling/createMessage`, `elicitation/create`) be
+// promoted to an async, polled operation. The requester opts in by
+// attaching a `task` field to the request params; the receiver returns
+// a `CreateTaskResult { task }` envelope right away, and the actual
+// result is fetched later via `tasks/result`. Status transitions can
+// be polled via `tasks/get` or pushed via `notifications/tasks/status`.
+
+enum class TaskStatus {
+    working,
+    input_required,
+    completed,
+    failed,
+    cancelled,
+};
+void to_json(nlohmann::json& j, TaskStatus s);
+void from_json(const nlohmann::json& j, TaskStatus& s);
+
+struct Task {
+    /// Receiver-generated, unique. The string need not be a UUID; we
+    /// emit a 128-bit hex token by default.
+    std::string                taskId;
+    TaskStatus                 status;
+    /// Optional human-readable progress description.
+    std::optional<std::string> status_message;
+    /// ISO 8601 UTC timestamps.
+    std::string                created_at;
+    std::string                last_updated_at;
+    /// Milliseconds the task is retained after creation. Absent / null
+    /// means unlimited (or implementation-defined retention).
+    std::optional<std::int64_t> ttl;
+    /// Suggested polling interval in milliseconds; advisory.
+    std::optional<std::int64_t> poll_interval;
+};
+void to_json(nlohmann::json& j, const Task& t);
+void from_json(const nlohmann::json& j, Task& t);
+
+/// Returned in place of the underlying request's normal result when
+/// the request was task-augmented.
+struct CreateTaskResult {
+    Task task;
+};
+void to_json(nlohmann::json& j, const CreateTaskResult& r);
+void from_json(const nlohmann::json& j, CreateTaskResult& r);
+
+struct GetTaskRequestParams {
+    std::string task_id;
+};
+void to_json(nlohmann::json& j, const GetTaskRequestParams& p);
+void from_json(const nlohmann::json& j, GetTaskRequestParams& p);
+
+struct GetTaskResultRequestParams {
+    std::string task_id;
+};
+void to_json(nlohmann::json& j, const GetTaskResultRequestParams& p);
+void from_json(const nlohmann::json& j, GetTaskResultRequestParams& p);
+
+struct ListTasksRequestParams {
+    std::optional<std::string> cursor;
+};
+void to_json(nlohmann::json& j, const ListTasksRequestParams& p);
+void from_json(const nlohmann::json& j, ListTasksRequestParams& p);
+
+struct ListTasksResult {
+    std::vector<Task>          tasks;
+    std::optional<std::string> next_cursor;
+};
+void to_json(nlohmann::json& j, const ListTasksResult& r);
+void from_json(const nlohmann::json& j, ListTasksResult& r);
+
+struct CancelTaskRequestParams {
+    std::string task_id;
+};
+void to_json(nlohmann::json& j, const CancelTaskRequestParams& p);
+void from_json(const nlohmann::json& j, CancelTaskRequestParams& p);
+
+struct TaskStatusNotificationParams {
+    /// A point-in-time projection of the underlying Task. Same shape
+    /// as Task, no extra fields.
+    Task task;
+};
+void to_json(nlohmann::json& j, const TaskStatusNotificationParams& p);
+void from_json(const nlohmann::json& j, TaskStatusNotificationParams& p);
+
+inline constexpr std::string_view method_tasks_get    = "tasks/get";
+inline constexpr std::string_view method_tasks_result = "tasks/result";
+inline constexpr std::string_view method_tasks_list   = "tasks/list";
+inline constexpr std::string_view method_tasks_cancel = "tasks/cancel";
+inline constexpr std::string_view method_notifications_tasks_status
+    = "notifications/tasks/status";
+
+/// Meta key the spec mandates on `tasks/result` payloads to bind the
+/// result back to its task. Server-side tooling sets it; clients can
+/// optionally check it.
+inline constexpr std::string_view tasks_related_task_meta_key
+    = "io.modelcontextprotocol/related-task";
 
 }  // namespace mcp
 

@@ -35,6 +35,8 @@
 
 namespace mcp {
 
+namespace detail { class TaskStore; }
+
 class Server {
 public:
     /// Tool handler. Takes the inbound `arguments` JSON (or null if the
@@ -61,6 +63,9 @@ public:
         std::function<GetPromptResult(const std::unordered_map<std::string, std::string>& arguments)>;
 
     explicit Server(Implementation server_info);
+    /// Out-of-line because the optional `tasks_` member holds a
+    /// pImpl-style forward-declared TaskStore.
+    ~Server();
 
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
@@ -163,6 +168,19 @@ public:
         std::function<CompletionValues(const CompleteRequestParams&)>;
     Server& enable_completion(CompletionHandler handler);
 
+    /// Enable the `tasks` capability for tool calls. Once enabled, a
+    /// `tools/call` request that carries a `task` augmentation in
+    /// params is dispatched onto a worker thread; the synchronous reply
+    /// is a `CreateTaskResult` envelope, and the actual `CallToolResult`
+    /// is fetched later via `tasks/result`.
+    ///
+    /// `default_ttl_ms` controls how long completed tasks are retained
+    /// before garbage collection (0 / nullopt ⇒ unlimited). Per spec,
+    /// the requester may also override the TTL per call.
+    ///
+    /// Idempotent: calling twice replaces the prior settings.
+    Server& enable_tasks(std::optional<std::int64_t> default_ttl_ms = std::nullopt);
+
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
     /// called or the transport closes.
@@ -192,6 +210,11 @@ private:
     nlohmann::json handle_set_level(const nlohmann::json& params);
     void           handle_cancelled(const nlohmann::json& params);
     nlohmann::json handle_complete(const nlohmann::json& params);
+
+    nlohmann::json handle_get_task(const nlohmann::json& params);
+    nlohmann::json handle_get_task_result(const nlohmann::json& params);
+    nlohmann::json handle_list_tasks(const nlohmann::json& params);
+    nlohmann::json handle_cancel_task(const nlohmann::json& params);
 
     struct ToolEntry {
         Tool        descriptor;
@@ -225,6 +248,13 @@ private:
 
     CompletionHandler                              completion_handler_;
     std::mutex                                     completion_mu_;
+
+    /// Tasks: nullable. Allocated by enable_tasks(). When null, the
+    /// `tasks` capability is not advertised and `tools/call` requests
+    /// with a `task` augmentation receive a method_not_supported
+    /// error.
+    std::unique_ptr<detail::TaskStore>             tasks_;
+    std::optional<std::int64_t>                    tasks_default_ttl_ms_;
 
     /// Acquire a strong reference to the live Session; returns empty
     /// when run() has not started or has already returned. Lets

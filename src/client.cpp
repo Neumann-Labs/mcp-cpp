@@ -165,6 +165,109 @@ Client::call_tool(std::string name, nlohmann::json arguments) {
         });
 }
 
+std::future<CreateTaskResult>
+Client::call_tool_as_task(std::string                 name,
+                          nlohmann::json              arguments,
+                          std::optional<std::int64_t> ttl_ms) {
+    auto session = acquire_session();
+    if (!session) {
+        throw Error{error_code::internal_error, "client not connected"};
+    }
+    CallToolRequestParams params{
+        .name      = std::move(name),
+        .arguments = arguments.is_null() ? std::nullopt
+                                         : std::optional<nlohmann::json>(std::move(arguments)),
+        .task      = TaskAugmentation{.ttl = ttl_ms},
+    };
+    auto inner = session->send_request(std::string{method_tools_call},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> CreateTaskResult {
+            return inner.get().get<CreateTaskResult>();
+        });
+}
+
+std::future<Task> Client::task_get(std::string task_id) {
+    auto session = acquire_session();
+    if (!session) {
+        throw Error{error_code::internal_error, "client not connected"};
+    }
+    auto inner = session->send_request(std::string{method_tasks_get},
+        nlohmann::json(GetTaskRequestParams{.task_id = std::move(task_id)}));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> Task {
+            return inner.get().get<Task>();
+        });
+}
+
+std::future<nlohmann::json> Client::task_result(std::string task_id) {
+    auto session = acquire_session();
+    if (!session) {
+        throw Error{error_code::internal_error, "client not connected"};
+    }
+    auto inner = session->send_request(std::string{method_tasks_result},
+        nlohmann::json(GetTaskResultRequestParams{.task_id = std::move(task_id)}));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> nlohmann::json {
+            return inner.get();
+        });
+}
+
+std::future<ListTasksResult>
+Client::task_list(std::optional<std::string> cursor) {
+    auto session = acquire_session();
+    if (!session) {
+        throw Error{error_code::internal_error, "client not connected"};
+    }
+    ListTasksRequestParams params{.cursor = std::move(cursor)};
+    auto inner = session->send_request(std::string{method_tasks_list},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ListTasksResult {
+            return inner.get().get<ListTasksResult>();
+        });
+}
+
+std::future<Task> Client::task_cancel(std::string task_id) {
+    auto session = acquire_session();
+    if (!session) {
+        throw Error{error_code::internal_error, "client not connected"};
+    }
+    auto inner = session->send_request(std::string{method_tasks_cancel},
+        nlohmann::json(CancelTaskRequestParams{.task_id = std::move(task_id)}));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> Task {
+            return inner.get().get<Task>();
+        });
+}
+
+void Client::set_task_status_handler(TaskStatusHandler handler) {
+    auto session = acquire_session();
+    if (!session) throw Error{error_code::internal_error, "client not connected"};
+    {
+        std::lock_guard<std::mutex> lk(handlers_mu_);
+        task_status_handler_ = handler;
+    }
+    const std::string method{method_notifications_tasks_status};
+    if (handler) {
+        session->set_notification_handler(method,
+            [h = std::move(handler)](const nlohmann::json& params) {
+                if (params.is_null()) return;
+                Task projection;
+                try {
+                    // notifications/tasks/status carries the Task
+                    // projection inline (no wrapper object).
+                    projection = params.get<Task>();
+                } catch (...) {
+                    return;
+                }
+                h(projection);
+            });
+    } else {
+        session->set_notification_handler(method, nullptr);
+    }
+}
+
 // =====================================================================
 // resources
 // =====================================================================

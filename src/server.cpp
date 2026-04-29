@@ -9,18 +9,405 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <ctime>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <random>
+#include <sstream>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace mcp {
 
+namespace detail {
+
+// ISO 8601 UTC timestamp at second granularity. Good enough for
+// the Task createdAt/lastUpdatedAt projections — sub-second
+// precision isn't required by the spec.
+inline std::string iso_utc_now() {
+    using clock = std::chrono::system_clock;
+    const auto t  = clock::to_time_t(clock::now());
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buf;
+}
+
+// 128-bit hex token. Per-call seeded — not cryptographic, but
+// non-adversarial unguessability is sufficient: task ids only
+// need to be unique within a single Server lifetime.
+inline std::string mint_task_id() {
+    std::random_device rd;
+    std::mt19937_64 rng{(static_cast<std::uint64_t>(rd()) << 32) ^ rd()};
+    std::uniform_int_distribution<std::uint64_t> dist;
+    std::ostringstream os;
+    os << std::hex << dist(rng) << dist(rng);
+    return os.str();
+}
+
+// =====================================================================
+// TaskStore
+//
+// Bookkeeping for all in-flight tasks owned by a Server. The store
+// is thread-safe; callers can create / get / list / cancel from any
+// thread. Per-task state transitions fire a single store-wide cv
+// (`cv_`) so wait_result() readers wake on every change without us
+// having to maintain a per-entry condvar.
+// =====================================================================
+class TaskStore {
+public:
+    using StatusListener = std::function<void(const Task&)>;
+
+    /// Create a new task in `working` state. Returns the task envelope
+    /// the requester sees in CreateTaskResult.
+    Task create(std::optional<std::int64_t> ttl_ms);
+
+    /// Mark a task as completed and stash its result payload. Wakes
+    /// any tasks/result waiter and notifies the StatusListener.
+    void complete(const std::string& id, nlohmann::json result);
+
+    /// Mark a task as failed with the given message.
+    void fail(const std::string& id, std::string message);
+
+    /// Cooperative cancel: marks the task cancelled and wakes
+    /// waiters. Returns the cancelled-projection of the task, or
+    /// std::nullopt if no such task. Per spec, cancelling an already
+    /// terminal task is a no-op (we just return its current state).
+    std::optional<Task> cancel(const std::string& id);
+
+    /// Snapshot the task envelope by id.
+    [[nodiscard]] std::optional<Task> get(const std::string& id) const;
+
+    /// Block until the named task hits a terminal status, or `timeout`
+    /// elapses. Returns the final result payload on completed, throws
+    /// Error on failed/cancelled, or returns std::nullopt if the task
+    /// wasn't terminal in time.
+    std::optional<nlohmann::json>
+    wait_result(const std::string& id, std::chrono::milliseconds timeout);
+
+    /// Paginated listing in creation order.
+    [[nodiscard]] ListTasksResult
+    list(std::optional<std::string> cursor, std::size_t page_size) const;
+
+    /// Read the cooperative cancellation flag for a task. Returns
+    /// false if the task isn't known.
+    [[nodiscard]] bool is_cancelled(const std::string& id) const;
+
+    /// Set once at startup; called on every task transition with a
+    /// projection of the current task.
+    void set_status_listener(StatusListener l);
+
+    /// Sweep tasks whose ttl has elapsed since creation. Called by
+    /// the background gc thread. Returns the count of removed tasks.
+    std::size_t gc_expired();
+
+    /// Track a detached worker thread. Increment on spawn, decrement
+    /// when the worker is done. shutdown() blocks until the count
+    /// reaches zero so the Server destructor can safely destroy the
+    /// store without leaving dangling references in still-running
+    /// workers.
+    void worker_started() noexcept;
+    void worker_finished() noexcept;
+
+    /// Mark all in-flight tasks failed and wake their waiters, then
+    /// block until any in-flight worker threads have returned. Called
+    /// at Server teardown.
+    void shutdown();
+
+private:
+    struct Entry {
+        Task                                      task;
+        std::optional<nlohmann::json>             result;
+        std::optional<std::string>                error;
+        std::atomic<bool>                         cancelled{false};
+        std::chrono::steady_clock::time_point     created_steady;
+    };
+
+    [[nodiscard]] static bool is_terminal(TaskStatus s) noexcept {
+        return s == TaskStatus::completed ||
+               s == TaskStatus::failed    ||
+               s == TaskStatus::cancelled;
+    }
+
+    void touch_locked(Entry& e, TaskStatus new_status,
+                      std::optional<std::string> message) {
+        e.task.status          = new_status;
+        e.task.last_updated_at = iso_utc_now();
+        if (message.has_value()) e.task.status_message = std::move(*message);
+    }
+
+    mutable std::mutex                                         mu_;
+    std::condition_variable                                    cv_;
+    std::unordered_map<std::string, std::unique_ptr<Entry>>    entries_;
+    std::vector<std::string>                                   order_;
+    StatusListener                                             listener_;
+    std::atomic<bool>                                          shutting_down_{false};
+
+    // In-flight worker bookkeeping. workers_mu_ + workers_cv_ are
+    // held only briefly around increments/decrements; shutdown()
+    // takes the lock and waits.
+    std::mutex                                                 workers_mu_;
+    std::condition_variable                                    workers_cv_;
+    int                                                        workers_inflight_{0};
+};
+
+Task TaskStore::create(std::optional<std::int64_t> ttl_ms) {
+    auto entry = std::make_unique<Entry>();
+    entry->task.taskId          = mint_task_id();
+    entry->task.status          = TaskStatus::working;
+    entry->task.created_at      = iso_utc_now();
+    entry->task.last_updated_at = entry->task.created_at;
+    entry->task.ttl             = ttl_ms;
+    entry->created_steady       = std::chrono::steady_clock::now();
+
+    Task projection;
+    StatusListener listener_copy;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        projection = entry->task;
+        order_.push_back(entry->task.taskId);
+        entries_.emplace(entry->task.taskId, std::move(entry));
+        listener_copy = listener_;
+    }
+    if (listener_copy) listener_copy(projection);
+    return projection;
+}
+
+void TaskStore::complete(const std::string& id, nlohmann::json result) {
+    Task projection;
+    StatusListener listener_copy;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = entries_.find(id);
+        if (it == entries_.end()) return;
+        auto& e = *it->second;
+        if (is_terminal(e.task.status)) return;  // already done; ignore
+        // Cancellation wins: if the task was cancelled while the worker
+        // was running, drop the result and keep the cancelled state.
+        if (e.cancelled.load(std::memory_order_acquire)) {
+            touch_locked(e, TaskStatus::cancelled, std::string{"cancelled"});
+        } else {
+            e.result = std::move(result);
+            touch_locked(e, TaskStatus::completed, std::nullopt);
+        }
+        projection    = e.task;
+        listener_copy = listener_;
+    }
+    cv_.notify_all();
+    if (listener_copy) listener_copy(projection);
+}
+
+void TaskStore::fail(const std::string& id, std::string message) {
+    Task projection;
+    StatusListener listener_copy;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = entries_.find(id);
+        if (it == entries_.end()) return;
+        auto& e = *it->second;
+        if (is_terminal(e.task.status)) return;
+        e.error = message;
+        touch_locked(e, TaskStatus::failed, message);
+        projection    = e.task;
+        listener_copy = listener_;
+    }
+    cv_.notify_all();
+    if (listener_copy) listener_copy(projection);
+}
+
+std::optional<Task> TaskStore::cancel(const std::string& id) {
+    Task projection;
+    StatusListener listener_copy;
+    bool fire_listener = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = entries_.find(id);
+        if (it == entries_.end()) return std::nullopt;
+        auto& e = *it->second;
+        e.cancelled.store(true, std::memory_order_release);
+        if (!is_terminal(e.task.status)) {
+            touch_locked(e, TaskStatus::cancelled, std::string{"cancelled"});
+            fire_listener = true;
+        }
+        projection    = e.task;
+        listener_copy = listener_;
+    }
+    if (fire_listener) {
+        cv_.notify_all();
+        if (listener_copy) listener_copy(projection);
+    }
+    return projection;
+}
+
+std::optional<Task> TaskStore::get(const std::string& id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = entries_.find(id);
+    if (it == entries_.end()) return std::nullopt;
+    return it->second->task;
+}
+
+bool TaskStore::is_cancelled(const std::string& id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = entries_.find(id);
+    if (it == entries_.end()) return false;
+    return it->second->cancelled.load(std::memory_order_acquire);
+}
+
+std::optional<nlohmann::json>
+TaskStore::wait_result(const std::string& id,
+                       std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lk(mu_);
+    if (!cv_.wait_for(lk, timeout, [&] {
+            auto it = entries_.find(id);
+            if (it == entries_.end()) return true;  // gone — also "terminal"
+            return is_terminal(it->second->task.status) ||
+                   shutting_down_.load(std::memory_order_acquire);
+        })) {
+        // Timed out without reaching terminal.
+        return std::nullopt;
+    }
+    auto it = entries_.find(id);
+    if (it == entries_.end()) {
+        throw Error{error_code::invalid_params,
+                    "task not found: " + id};
+    }
+    auto& e = *it->second;
+    switch (e.task.status) {
+        case TaskStatus::completed:
+            if (e.result.has_value()) return *e.result;
+            // Shouldn't happen, but be defensive.
+            throw Error{error_code::internal_error,
+                        "task completed without a result payload"};
+        case TaskStatus::failed:
+            throw Error{error_code::internal_error,
+                        "task failed: " + e.error.value_or(std::string{"<no message>"})};
+        case TaskStatus::cancelled:
+            throw Error{error_code::invalid_request,
+                        "task cancelled: " + id};
+        default:
+            // Reached on shutdown if not terminal. Treat as failure.
+            throw Error{error_code::internal_error,
+                        "server shutting down before task completed"};
+    }
+}
+
+ListTasksResult
+TaskStore::list(std::optional<std::string> cursor,
+                std::size_t                page_size) const {
+    std::lock_guard<std::mutex> lk(mu_);
+
+    std::size_t offset = 0;
+    if (cursor.has_value() && !cursor->empty()) {
+        // Same strict cursor format as paginate(): decimal digits only.
+        const auto& s = *cursor;
+        for (char c : s) {
+            if (c < '0' || c > '9') {
+                throw Error{error_code::invalid_params,
+                            "invalid pagination cursor: " + s};
+            }
+        }
+        try { offset = static_cast<std::size_t>(std::stoull(s)); }
+        catch (...) { throw Error{error_code::invalid_params,
+                                  "invalid pagination cursor: " + s}; }
+    }
+
+    ListTasksResult out;
+    if (offset >= order_.size()) return out;
+
+    const std::size_t end = (page_size == 0)
+        ? order_.size()
+        : std::min(order_.size(), offset + page_size);
+    out.tasks.reserve(end - offset);
+    for (std::size_t i = offset; i < end; ++i) {
+        auto it = entries_.find(order_[i]);
+        if (it != entries_.end()) out.tasks.push_back(it->second->task);
+    }
+    if (end < order_.size()) out.next_cursor = std::to_string(end);
+    return out;
+}
+
+void TaskStore::set_status_listener(StatusListener l) {
+    std::lock_guard<std::mutex> lk(mu_);
+    listener_ = std::move(l);
+}
+
+std::size_t TaskStore::gc_expired() {
+    const auto now = std::chrono::steady_clock::now();
+    std::size_t removed = 0;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = entries_.begin();
+    while (it != entries_.end()) {
+        const auto& e = *it->second;
+        if (is_terminal(e.task.status) && e.task.ttl.has_value()) {
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - e.created_steady).count();
+            if (age >= *e.task.ttl) {
+                // Drop from order_ too. Linear, but ttl-driven gc is
+                // expected to be rare.
+                const auto id = it->first;
+                order_.erase(std::remove(order_.begin(), order_.end(), id),
+                             order_.end());
+                it = entries_.erase(it);
+                ++removed;
+                continue;
+            }
+        }
+        ++it;
+    }
+    return removed;
+}
+
+void TaskStore::worker_started() noexcept {
+    std::lock_guard<std::mutex> lk(workers_mu_);
+    ++workers_inflight_;
+}
+
+void TaskStore::worker_finished() noexcept {
+    bool last = false;
+    {
+        std::lock_guard<std::mutex> lk(workers_mu_);
+        if (--workers_inflight_ == 0) last = true;
+    }
+    if (last) workers_cv_.notify_all();
+}
+
+void TaskStore::shutdown() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        shutting_down_.store(true, std::memory_order_release);
+    }
+    cv_.notify_all();
+    // Block until every detached worker has returned. Without this
+    // the Server destructor can race with a still-running task
+    // worker that holds `this` and would call back into a freed
+    // store.
+    std::unique_lock<std::mutex> lk(workers_mu_);
+    workers_cv_.wait(lk, [&] { return workers_inflight_ == 0; });
+}
+
+}  // namespace detail
+
 Server::Server(Implementation server_info)
     : server_info_(std::move(server_info)) {}
+
+Server::~Server() {
+    if (tasks_) tasks_->shutdown();
+}
 
 Server& Server::set_instructions(std::string s) {
     instructions_ = std::move(s);
@@ -237,6 +624,12 @@ Server& Server::enable_completion(CompletionHandler handler) {
     return *this;
 }
 
+Server& Server::enable_tasks(std::optional<std::int64_t> default_ttl_ms) {
+    if (!tasks_) tasks_ = std::make_unique<detail::TaskStore>();
+    tasks_default_ttl_ms_ = default_ttl_ms;
+    return *this;
+}
+
 // =====================================================================
 // Handlers
 // =====================================================================
@@ -294,6 +687,15 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
             result.capabilities.completions = nlohmann::json::object();
         }
     }
+    if (tasks_) {
+        TasksCapability tc;
+        tc.list   = nlohmann::json::object();
+        tc.cancel = nlohmann::json::object();
+        TasksRequestsCapability rc;
+        rc.tools  = nlohmann::json{{"call", nlohmann::json::object()}};
+        tc.requests = std::move(rc);
+        result.capabilities.tasks = std::move(tc);
+    }
 
     return result;
 }
@@ -338,8 +740,51 @@ nlohmann::json Server::handle_call_tool(const nlohmann::json& params) {
         h = it->second.handler;
     }
     const auto args = parsed.arguments.value_or(nlohmann::json::object());
-    auto result = h(args);
-    return result;
+
+    if (parsed.task.has_value()) {
+        if (!tasks_) {
+            throw Error{error_code::invalid_request,
+                        "tasks/tools/call: server has not enabled the tasks "
+                        "capability"};
+        }
+        // Resolve effective TTL: per-call override wins, else the
+        // server-wide default.
+        const auto ttl = parsed.task->ttl.has_value()
+                             ? parsed.task->ttl
+                             : tasks_default_ttl_ms_;
+        const Task task = tasks_->create(ttl);
+
+        // Dispatch the actual tool call onto a worker thread. The
+        // request handler is itself running on a Session worker (the
+        // Session detaches inbound requests so server-side handlers
+        // can issue further nested requests without deadlock), but
+        // we still want the *task* worker decoupled so this handler
+        // returns its CreateTaskResult immediately.
+        //
+        // worker_started/finished bracket the worker so TaskStore
+        // shutdown() can wait for it to exit before the Server is
+        // destroyed.
+        const std::string id = task.taskId;
+        tasks_->worker_started();
+        std::thread([store = tasks_.get(), h = std::move(h),
+                      args = std::move(args), id]() mutable {
+            try {
+                CallToolResult res = h(args);
+                store->complete(id, nlohmann::json(res));
+            } catch (const Error& e) {
+                store->fail(id, e.message());
+            } catch (const std::exception& e) {
+                store->fail(id, e.what());
+            } catch (...) {
+                store->fail(id, "unknown exception");
+            }
+            store->worker_finished();
+        }).detach();
+
+        return CreateTaskResult{.task = task};
+    }
+
+    return h(args);
 }
 
 nlohmann::json Server::handle_list_resources(const nlohmann::json& params) {
@@ -492,6 +937,111 @@ nlohmann::json Server::handle_complete(const nlohmann::json& params) {
     return CompleteResult{.completion = h(parsed)};
 }
 
+nlohmann::json Server::handle_get_task(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    if (!tasks_) {
+        throw Error{error_code::method_not_found,
+                    "tasks: server has not enabled the tasks capability"};
+    }
+    GetTaskRequestParams parsed;
+    try {
+        parsed = params.get<GetTaskRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid tasks/get params: "} + e.what()};
+    }
+    auto t = tasks_->get(parsed.task_id);
+    if (!t.has_value()) {
+        throw Error{error_code::invalid_params,
+                    "task not found: " + parsed.task_id};
+    }
+    return *t;
+}
+
+nlohmann::json Server::handle_get_task_result(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    if (!tasks_) {
+        throw Error{error_code::method_not_found,
+                    "tasks: server has not enabled the tasks capability"};
+    }
+    GetTaskResultRequestParams parsed;
+    try {
+        parsed = params.get<GetTaskResultRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid tasks/result params: "} + e.what()};
+    }
+    // Block up to a hair under the JSON-RPC default request timeout
+    // so the requester gets a clean error rather than a timeout if
+    // the work overruns. The spec lets clients re-poll as needed.
+    constexpr auto wait_budget = std::chrono::milliseconds{25'000};
+    auto value = tasks_->wait_result(parsed.task_id, wait_budget);
+    if (!value.has_value()) {
+        // Still working. Per spec, it's reasonable to return the
+        // current Task envelope here so the caller can poll.
+        // Surfaced as an error so the result-shape stays consistent.
+        throw Error{error_code::invalid_request,
+                    "task not yet terminal: " + parsed.task_id};
+    }
+    // Tag the result with the spec's mandated _meta key so callers
+    // can correlate. We tolerate the result not being an object
+    // (e.g. raw types) by skipping the tag.
+    if (value->is_object()) {
+        auto& meta = (*value)["_meta"];
+        if (!meta.is_object()) meta = nlohmann::json::object();
+        meta[std::string{tasks_related_task_meta_key}] =
+            nlohmann::json{{"taskId", parsed.task_id}};
+    }
+    return *value;
+}
+
+nlohmann::json Server::handle_list_tasks(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    if (!tasks_) {
+        throw Error{error_code::method_not_found,
+                    "tasks: server has not enabled the tasks capability"};
+    }
+    ListTasksRequestParams parsed;
+    if (!params.is_null()) {
+        try {
+            parsed = params.get<ListTasksRequestParams>();
+        } catch (const std::exception& e) {
+            throw Error{error_code::invalid_params,
+                        std::string{"invalid tasks/list params: "} + e.what()};
+        }
+    }
+    return tasks_->list(parsed.cursor, page_size_);
+}
+
+nlohmann::json Server::handle_cancel_task(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    if (!tasks_) {
+        throw Error{error_code::method_not_found,
+                    "tasks: server has not enabled the tasks capability"};
+    }
+    CancelTaskRequestParams parsed;
+    try {
+        parsed = params.get<CancelTaskRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid tasks/cancel params: "} + e.what()};
+    }
+    auto t = tasks_->cancel(parsed.task_id);
+    if (!t.has_value()) {
+        throw Error{error_code::invalid_params,
+                    "task not found: " + parsed.task_id};
+    }
+    return *t;
+}
+
 void Server::handle_cancelled(const nlohmann::json& params) {
     // The Server cannot abort an in-flight handler in Phase 2; we log
     // the cancellation so users know it arrived. Phase 3 will plumb a
@@ -546,6 +1096,31 @@ void Server::run(std::unique_ptr<Transport> transport) {
         [this](const nlohmann::json& p) { return handle_set_level(p); });
     local->set_request_handler(std::string{method_completion_complete},
         [this](const nlohmann::json& p) { return handle_complete(p); });
+
+    if (tasks_) {
+        local->set_request_handler(std::string{method_tasks_get},
+            [this](const nlohmann::json& p) { return handle_get_task(p); });
+        local->set_request_handler(std::string{method_tasks_result},
+            [this](const nlohmann::json& p) { return handle_get_task_result(p); });
+        local->set_request_handler(std::string{method_tasks_list},
+            [this](const nlohmann::json& p) { return handle_list_tasks(p); });
+        local->set_request_handler(std::string{method_tasks_cancel},
+            [this](const nlohmann::json& p) { return handle_cancel_task(p); });
+
+        // Push status updates to the client over notifications/tasks/status.
+        // The listener fires while TaskStore holds its mutex... no — actually
+        // we already drop the lock before calling the listener (see
+        // TaskStore::complete/fail/cancel/create), so this is safe.
+        std::weak_ptr<Session> weak{local};
+        tasks_->set_status_listener(
+            [weak](const Task& t) {
+                auto s = weak.lock();
+                if (!s) return;
+                (void)s->send_notification(
+                    std::string{method_notifications_tasks_status},
+                    nlohmann::json(TaskStatusNotificationParams{.task = t}));
+            });
+    }
 
     local->set_notification_handler(std::string{method_notifications_cancelled},
         [this](const nlohmann::json& p) { handle_cancelled(p); });

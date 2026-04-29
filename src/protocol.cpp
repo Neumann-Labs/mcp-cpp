@@ -259,6 +259,7 @@ void to_json(nlohmann::json& j, const ClientCapabilities& c) {
     put_optional(j, "roots",        c.roots);
     put_optional(j, "sampling",     c.sampling);
     put_optional(j, "elicitation",  c.elicitation);
+    put_optional(j, "tasks",        c.tasks);
 }
 
 void from_json(const nlohmann::json& j, ClientCapabilities& c) {
@@ -266,6 +267,7 @@ void from_json(const nlohmann::json& j, ClientCapabilities& c) {
     take_optional      (j, "roots",        c.roots);
     take_optional      (j, "sampling",     c.sampling);
     take_optional      (j, "elicitation",  c.elicitation);
+    take_optional      (j, "tasks",        c.tasks);
 }
 
 void to_json(nlohmann::json& j, const PromptsCapability& c) {
@@ -302,6 +304,7 @@ void to_json(nlohmann::json& j, const ServerCapabilities& c) {
     put_optional(j, "prompts",      c.prompts);
     put_optional(j, "resources",    c.resources);
     put_optional(j, "tools",        c.tools);
+    put_optional(j, "tasks",        c.tasks);
 }
 
 void from_json(const nlohmann::json& j, ServerCapabilities& c) {
@@ -311,6 +314,7 @@ void from_json(const nlohmann::json& j, ServerCapabilities& c) {
     take_optional      (j, "prompts",      c.prompts);
     take_optional      (j, "resources",    c.resources);
     take_optional      (j, "tools",        c.tools);
+    take_optional      (j, "tasks",        c.tasks);
 }
 
 // =====================================================================
@@ -625,11 +629,13 @@ void to_json(nlohmann::json& j, const CallToolRequestParams& p) {
     j = nlohmann::json::object();
     j["name"] = p.name;
     put_optional(j, "arguments", p.arguments);
+    put_optional(j, "task",      p.task);
 }
 
 void from_json(const nlohmann::json& j, CallToolRequestParams& p) {
     p.name = require<std::string>(j, "name");
     take_optional_json(j, "arguments", p.arguments);
+    take_optional      (j, "task",     p.task);
 }
 
 void to_json(nlohmann::json& j, const CallToolResult& r) {
@@ -1282,6 +1288,142 @@ void to_json(nlohmann::json& j, const ElicitationCompleteNotificationParams& p) 
 void from_json(const nlohmann::json& j,
                ElicitationCompleteNotificationParams& p) {
     p.elicitation_id = require<std::string>(j, "elicitationId");
+}
+
+// =====================================================================
+// Tasks
+// =====================================================================
+
+void to_json(nlohmann::json& j, TaskStatus s) {
+    switch (s) {
+        case TaskStatus::working:        j = "working";        return;
+        case TaskStatus::input_required: j = "input_required"; return;
+        case TaskStatus::completed:      j = "completed";      return;
+        case TaskStatus::failed:         j = "failed";         return;
+        case TaskStatus::cancelled:      j = "cancelled";      return;
+    }
+    j = "failed";  // unreachable; defensive default
+}
+void from_json(const nlohmann::json& j, TaskStatus& s) {
+    const auto v = j.get<std::string>();
+    if      (v == "working")        s = TaskStatus::working;
+    else if (v == "input_required") s = TaskStatus::input_required;
+    else if (v == "completed")      s = TaskStatus::completed;
+    else if (v == "failed")         s = TaskStatus::failed;
+    else if (v == "cancelled")      s = TaskStatus::cancelled;
+    else throw Error(error_code::invalid_params,
+                     "task: unknown status \"" + v + "\"");
+}
+
+void to_json(nlohmann::json& j, const Task& t) {
+    j = nlohmann::json::object();
+    j["taskId"]        = t.taskId;
+    j["status"]        = t.status;
+    j["createdAt"]     = t.created_at;
+    j["lastUpdatedAt"] = t.last_updated_at;
+    put_optional(j, "statusMessage", t.status_message);
+    put_optional(j, "ttl",           t.ttl);
+    put_optional(j, "pollInterval",  t.poll_interval);
+}
+void from_json(const nlohmann::json& j, Task& t) {
+    t.taskId          = require<std::string>(j, "taskId");
+    t.status          = j.at("status").get<TaskStatus>();
+    t.created_at      = require<std::string>(j, "createdAt");
+    t.last_updated_at = require<std::string>(j, "lastUpdatedAt");
+    take_optional(j, "statusMessage", t.status_message);
+    take_optional(j, "ttl",           t.ttl);
+    take_optional(j, "pollInterval",  t.poll_interval);
+}
+
+void to_json(nlohmann::json& j, const TaskAugmentation& t) {
+    j = nlohmann::json::object();
+    put_optional(j, "ttl", t.ttl);
+}
+void from_json(const nlohmann::json& j, TaskAugmentation& t) {
+    take_optional(j, "ttl", t.ttl);
+}
+
+void to_json(nlohmann::json& j, const CreateTaskResult& r) {
+    j = nlohmann::json::object();
+    j["task"] = r.task;
+}
+void from_json(const nlohmann::json& j, CreateTaskResult& r) {
+    r.task = j.at("task").get<Task>();
+}
+
+void to_json(nlohmann::json& j, const GetTaskRequestParams& p) {
+    j = nlohmann::json::object();
+    j["taskId"] = p.task_id;
+}
+void from_json(const nlohmann::json& j, GetTaskRequestParams& p) {
+    p.task_id = require<std::string>(j, "taskId");
+}
+
+void to_json(nlohmann::json& j, const GetTaskResultRequestParams& p) {
+    j = nlohmann::json::object();
+    j["taskId"] = p.task_id;
+}
+void from_json(const nlohmann::json& j, GetTaskResultRequestParams& p) {
+    p.task_id = require<std::string>(j, "taskId");
+}
+
+void to_json(nlohmann::json& j, const ListTasksRequestParams& p) {
+    j = nlohmann::json::object();
+    put_optional(j, "cursor", p.cursor);
+}
+void from_json(const nlohmann::json& j, ListTasksRequestParams& p) {
+    take_optional(j, "cursor", p.cursor);
+}
+
+void to_json(nlohmann::json& j, const ListTasksResult& r) {
+    j = nlohmann::json::object();
+    j["tasks"] = r.tasks;
+    put_optional(j, "nextCursor", r.next_cursor);
+}
+void from_json(const nlohmann::json& j, ListTasksResult& r) {
+    r.tasks = j.at("tasks").get<std::vector<Task>>();
+    take_optional(j, "nextCursor", r.next_cursor);
+}
+
+void to_json(nlohmann::json& j, const CancelTaskRequestParams& p) {
+    j = nlohmann::json::object();
+    j["taskId"] = p.task_id;
+}
+void from_json(const nlohmann::json& j, CancelTaskRequestParams& p) {
+    p.task_id = require<std::string>(j, "taskId");
+}
+
+void to_json(nlohmann::json& j, const TaskStatusNotificationParams& p) {
+    // Notifications carry the same Task projection inline (no
+    // wrapping object), per spec.
+    j = p.task;
+}
+void from_json(const nlohmann::json& j, TaskStatusNotificationParams& p) {
+    p.task = j.get<Task>();
+}
+
+void to_json(nlohmann::json& j, const TasksRequestsCapability& c) {
+    j = nlohmann::json::object();
+    put_optional(j, "tools",       c.tools);
+    put_optional(j, "sampling",    c.sampling);
+    put_optional(j, "elicitation", c.elicitation);
+}
+void from_json(const nlohmann::json& j, TasksRequestsCapability& c) {
+    take_optional_json(j, "tools",       c.tools);
+    take_optional_json(j, "sampling",    c.sampling);
+    take_optional_json(j, "elicitation", c.elicitation);
+}
+
+void to_json(nlohmann::json& j, const TasksCapability& c) {
+    j = nlohmann::json::object();
+    put_optional(j, "list",     c.list);
+    put_optional(j, "cancel",   c.cancel);
+    put_optional(j, "requests", c.requests);
+}
+void from_json(const nlohmann::json& j, TasksCapability& c) {
+    take_optional_json(j, "list",     c.list);
+    take_optional_json(j, "cancel",   c.cancel);
+    take_optional      (j, "requests", c.requests);
 }
 
 }  // namespace mcp
