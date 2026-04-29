@@ -562,9 +562,11 @@ void HttpServerHost::start() {
             }
         }
         if (ctx) {
-            ctx->server->stop();
-            if (ctx->run_thread.joinable()) ctx->run_thread.join();
+            // Same TSan-race rationale as in stop(): close the
+            // transport first, let its on_close cascade unblock the
+            // server's run loop, then join.
             ctx->transport->close();
+            if (ctx->run_thread.joinable()) ctx->run_thread.join();
         }
         res.status = 204;
     });
@@ -593,13 +595,23 @@ void HttpServerHost::stop() {
         // sampling reply that will never arrive) can return. If we
         // joined the listener before this, those in-flight handlers
         // would block forever and the join would deadlock.
+        //
+        // We deliberately do NOT call ctx->server->stop() here even
+        // though it would also unblock the run_thread's stop_cv:
+        // both stop() and transport->close() race to wake T14, but
+        // transport->close() also runs the Session's on_close hook
+        // (which touches Session members). If stop() wakes T14 first
+        // it will destroy the Session out from under that on_close
+        // hook — TSan caught exactly that race in CI. Letting the
+        // transport's on_close → user-on_closed cascade be the
+        // sole wake-up path keeps "Session destruction" properly
+        // happens-after "on_close finished".
         std::unordered_map<std::string, std::shared_ptr<SessionContext>> drained;
         {
             std::lock_guard<std::mutex> lk(impl_->sessions_mu);
             drained.swap(impl_->sessions);
         }
         for (auto& [id, ctx] : drained) {
-            ctx->server->stop();
             ctx->transport->close();
         }
 
