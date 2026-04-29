@@ -231,4 +231,49 @@ TEST(HttpEndToEnd, SessionIdReusedAcrossCalls) {
     host.stop();
 }
 
+TEST(HttpEndToEnd, ClientSendsDeleteOnGracefulClose) {
+    // Spec: a client that no longer needs a session SHOULD send an
+    // HTTP DELETE on the MCP path. Verify our transport does it,
+    // and that the server's session table reflects the removal.
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "127.0.0.1",
+            .path = "/mcp",
+        },
+        [](mcp::Server& s) {
+            s.tool("noop", json{{"type", "object"}},
+                   [](const json&) -> mcp::CallToolResult {
+                       return {.content = { mcp::TextContent{.text = "ok"} }};
+                   });
+        },
+    };
+    host.start();
+
+    mcp::HttpClientTransport::Options topts;
+    topts.url             = "http://127.0.0.1:" + std::to_string(host.port())
+                           + "/mcp";
+    topts.open_get_stream = false;
+
+    mcp::Client client{ mcp::Implementation{.name = "t", .version = "0"} };
+    client.connect(std::make_unique<mcp::HttpClientTransport>(topts));
+    (void)client.initialize().get();
+    EXPECT_EQ(host.active_sessions(), 1u);
+
+    // Disconnect should drive the transport's close(), which fires
+    // the spec-mandated DELETE before stopping the cpp-httplib
+    // clients.
+    client.disconnect();
+
+    // Allow a brief window for the DELETE to land.
+    auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (host.active_sessions() != 0u &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(20ms);
+    }
+    EXPECT_EQ(host.active_sessions(), 0u);
+
+    host.stop();
+}
+
 }  // namespace

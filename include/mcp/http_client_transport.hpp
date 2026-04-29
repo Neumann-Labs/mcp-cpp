@@ -181,6 +181,14 @@ private:
     std::condition_variable       session_id_cv_;
     std::optional<std::string>    session_id_;
 
+    // SSE resumability state (spec: server emits `id:` lines, client
+    // sends `Last-Event-ID` on reconnect and honours `retry:` for
+    // backoff). Updated by drain_sse on every event; read by the GET
+    // worker on reconnect.
+    mutable std::mutex            get_mu_state_;
+    std::string                   last_event_id_;
+    std::optional<int>            next_retry_ms_;
+
     // Mutable access token. The constructor seeds this from
     // Options::access_token; set_access_token() rotates it. Reads are
     // taken on every outbound request, so this is hot-ish — but

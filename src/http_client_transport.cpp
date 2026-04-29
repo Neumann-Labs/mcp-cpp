@@ -53,18 +53,27 @@ std::pair<std::string, std::string> split_url(std::string_view url) {
             std::string{url.substr(path_start)}};
 }
 
-// Iterate SSE frames in a buffer, calling `cb` with each event's `data`
-// payload. `buf` is read up through the last complete event terminator
-// (`\n\n` or `\r\n\r\n`); the unconsumed tail is left in `buf` for the
-// next round. SSE supports multiple kinds of fields; we only care about
-// `data:` lines for MCP. Multi-line `data:` is concatenated with `\n`
-// per the SSE spec.
+/// One SSE event distilled out of a buffer. We carry the
+/// MCP-relevant fields plus side-channel info (`id`, `retry`) so
+/// the GET worker can implement spec-mandated resumability and
+/// retry timing.
+struct SseEvent {
+    std::string                data;
+    std::optional<std::string> id;
+    std::optional<int>         retry_ms;  // server-suggested reconnect delay
+};
+
+// Iterate SSE frames in a buffer, calling `cb(SseEvent)` for each
+// complete event. `buf` is read up through the last complete event
+// terminator (`\n\n` or `\r\n\r\n`); the unconsumed tail stays in
+// `buf` for the next round. We capture `data:`, `id:`, and `retry:`
+// per the SSE spec; `event:` is ignored (MCP doesn't use named
+// events).
 template <typename Callback>
 void drain_sse(std::string& buf, Callback&& cb) {
     while (true) {
         std::size_t end = std::string::npos;
         std::size_t end_marker_len = 0;
-        // Look for "\n\n" or "\r\n\r\n" — whichever comes first.
         for (std::size_t i = 0; i + 1 < buf.size(); ++i) {
             if (buf[i] == '\n' && buf[i + 1] == '\n') {
                 end = i; end_marker_len = 2; break;
@@ -79,8 +88,7 @@ void drain_sse(std::string& buf, Callback&& cb) {
         const std::string event{buf.data(), end};
         buf.erase(0, end + end_marker_len);
 
-        // Each line in the event; gather data: payloads.
-        std::string data;
+        SseEvent se;
         std::size_t line_start = 0;
         while (line_start <= event.size()) {
             const auto line_end = event.find('\n', line_start);
@@ -104,12 +112,22 @@ void drain_sse(std::string& buf, Callback&& cb) {
                 if (!value.empty() && value.front() == ' ') value.remove_prefix(1);
             }
             if (field == "data") {
-                if (!data.empty()) data += '\n';
-                data.append(value);
+                if (!se.data.empty()) se.data += '\n';
+                se.data.append(value);
+            } else if (field == "id") {
+                se.id = std::string{value};
+            } else if (field == "retry") {
+                // Per SSE spec: integer milliseconds. Ignore on
+                // parse error / negative.
+                try {
+                    int v = std::stoi(std::string{value});
+                    if (v >= 0) se.retry_ms = v;
+                } catch (...) {}
             }
-            // Other fields (`event:`, `id:`, `retry:`) are ignored for now.
         }
-        if (!data.empty()) cb(std::move(data));
+        if (!se.data.empty() || se.id.has_value() || se.retry_ms.has_value()) {
+            cb(std::move(se));
+        }
     }
 }
 
@@ -184,6 +202,40 @@ void HttpClientTransport::close() {
         if (worker_.joinable()) worker_.join();
         if (get_thread_.joinable()) get_thread_.join();
         return;
+    }
+
+    // Spec: a client that no longer needs a session SHOULD send an
+    // HTTP DELETE on the MCP path so the server can free per-session
+    // state immediately. Best-effort: failure here is fine — close()
+    // always proceeds. Issue this BEFORE we stop the cpp-httplib
+    // clients below.
+    std::optional<std::string> sid;
+    {
+        std::lock_guard<std::mutex> lk(session_id_mu_);
+        sid = session_id_;
+    }
+    if (sid.has_value() && !sid->empty() && impl_) {
+        try {
+            httplib::Headers headers;
+            headers.emplace("MCP-Protocol-Version", opts_.protocol_version);
+            headers.emplace("Mcp-Session-Id",       *sid);
+            {
+                std::lock_guard<std::mutex> lk(auth_mu_);
+                if (!access_token_.empty()) {
+                    headers.emplace("Authorization", "Bearer " + access_token_);
+                }
+            }
+            for (const auto& [k, v] : opts_.extra_headers) headers.emplace(k, v);
+            // Use a fresh client so we don't race with whatever
+            // post/get clients may already have in flight.
+            httplib::Client cli{scheme_host_port_};
+            cli.set_connection_timeout(2, 0);
+            cli.set_read_timeout(2, 0);
+            cli.set_write_timeout(2, 0);
+            (void)cli.Delete(path_.c_str(), headers);
+        } catch (...) {
+            // best-effort; ignore
+        }
     }
 
     {
@@ -384,7 +436,16 @@ void HttpClientTransport::process_send(std::string frame) {
 
     if (ct.find("text/event-stream") != std::string::npos) {
         std::string buf = res->body;
-        drain_sse(buf, [this](std::string data) { deliver_frame(std::move(data)); });
+        drain_sse(buf, [this](SseEvent se) {
+            // Track the last-seen event id so a future reconnect
+            // (typically on the GET stream) can resume via
+            // Last-Event-ID.
+            if (se.id.has_value() && !se.id->empty()) {
+                std::lock_guard<std::mutex> lk(get_mu_state_);
+                last_event_id_ = *se.id;
+            }
+            if (!se.data.empty()) deliver_frame(std::move(se.data));
+        });
         return;
     }
     if (ct.find("application/json") != std::string::npos) {
@@ -431,6 +492,15 @@ void HttpClientTransport::run_get_stream() noexcept {
                 headers.emplace("Authorization", "Bearer " + access_token_);
             }
         }
+        // Resumability: hand back the last event id we saw on this
+        // session so the server can replay anything we missed during
+        // the disconnect.
+        {
+            std::lock_guard<std::mutex> lk(get_mu_state_);
+            if (!last_event_id_.empty()) {
+                headers.emplace("Last-Event-ID", last_event_id_);
+            }
+        }
         for (const auto& [k, v] : opts_.extra_headers) headers.emplace(k, v);
 
         httplib::Result res;
@@ -439,8 +509,17 @@ void HttpClientTransport::run_get_stream() noexcept {
                 [&](const char* data, std::size_t n) {
                     if (closed_.load(std::memory_order_acquire)) return false;
                     buf.append(data, n);
-                    drain_sse(buf,
-                        [this](std::string d) { deliver_frame(std::move(d)); });
+                    drain_sse(buf, [this](SseEvent se) {
+                        if (se.id.has_value() && !se.id->empty()) {
+                            std::lock_guard<std::mutex> lk(get_mu_state_);
+                            last_event_id_ = *se.id;
+                        }
+                        if (se.retry_ms.has_value()) {
+                            std::lock_guard<std::mutex> lk(get_mu_state_);
+                            next_retry_ms_ = se.retry_ms;
+                        }
+                        if (!se.data.empty()) deliver_frame(std::move(se.data));
+                    });
                     return true;
                 });
         } catch (...) {
@@ -471,10 +550,38 @@ void HttpClientTransport::run_get_stream() noexcept {
             return;
         }
 
+        // 404: the server has expired our session. Per spec, the
+        // client MUST treat this as "session is gone" — clear the
+        // negotiated id, and exit so the next outbound POST
+        // re-initializes. We don't re-open a GET stream from here:
+        // the next initialize will give us a fresh session id, at
+        // which point the GET worker re-arms.
+        if (res && res->status == 404) {
+            {
+                std::lock_guard<std::mutex> lk(session_id_mu_);
+                session_id_.reset();
+            }
+            return;
+        }
+
         if (closed_.load(std::memory_order_acquire)) return;
 
-        // Brief backoff before reconnecting after EOF/error.
-        std::this_thread::sleep_for(std::chrono::milliseconds{200});
+        // Backoff before reconnecting after EOF/error. Honour the
+        // server's `retry:` if it sent one; clamp to a sane band so
+        // a misbehaving server can't drive us into a hot loop or
+        // perma-sleep. Default 200ms when the server hasn't said
+        // otherwise.
+        std::chrono::milliseconds delay{200};
+        {
+            std::lock_guard<std::mutex> lk(get_mu_state_);
+            if (next_retry_ms_.has_value()) {
+                int v = *next_retry_ms_;
+                if (v < 50) v = 50;
+                if (v > 60'000) v = 60'000;
+                delay = std::chrono::milliseconds{v};
+            }
+        }
+        std::this_thread::sleep_for(delay);
     }
 }
 
