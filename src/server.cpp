@@ -552,10 +552,11 @@ void Server::run(std::unique_ptr<Transport> transport) {
 }
 
 void Server::stop() {
-    {
-        std::lock_guard<std::mutex> lk(stop_mu_);
-        stop_requested_.store(true, std::memory_order_release);
-    }
+    // Notify under the lock so a concurrent run() loop can't unblock,
+    // return, and start tearing down stop_cv_ before this notify_all
+    // observes it. (Same pattern Session uses for its workers_cv_.)
+    std::lock_guard<std::mutex> lk(stop_mu_);
+    stop_requested_.store(true, std::memory_order_release);
     stop_cv_.notify_all();
 }
 

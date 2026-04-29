@@ -313,10 +313,13 @@ void Session::handle_frame(std::string raw) {
             }
             std::thread([this, req = std::move(m)]() mutable {
                 handle_request(std::move(req));
-                {
-                    std::lock_guard<std::mutex> lk(workers_mu_);
-                    --workers_running_;
-                }
+                // Decrement and notify under the same lock. If the
+                // unlock happened first, close() could observe
+                // workers_running_==0, return, and destroy the cv
+                // before this thread reaches notify_all — TSan
+                // catches that race against pthread_cond_destroy.
+                std::lock_guard<std::mutex> lk(workers_mu_);
+                --workers_running_;
                 workers_cv_.notify_all();
             }).detach();
         } else if constexpr (std::is_same_v<T, JsonRpcNotification>) {
