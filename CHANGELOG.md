@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (post-0.1.0)
+
+_Nothing yet._
+
+## [0.1.0] - 2026-04-29
+
 ### Added
 
 - C++20 SDK targeting MCP protocol revision **2025-11-25**.
@@ -136,3 +142,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   primitive went through an adversarial review pass; legitimate
   findings closed in dedicated `fix(...)` commits before the
   release.
+- **Spec-completeness pass against the full 2025-11-25 schema**:
+  - New content variants `ToolUseContent` (`"tool_use"`) and
+    `ToolResultContent` (`"tool_result"`) for agentic-sampling
+    loops. ToolResultContent.content uses a separate
+    `PlainContentBlock` variant (excluding tool_use / tool_result)
+    to enforce the spec's no-nested-tool rule at compile time.
+  - `CreateMessageRequestParams.tools` and `.tool_choice` for
+    tool-enabled sampling. `ToolChoice` enum reshaped to
+    `auto / any / none / tool` (matching the spec; was the
+    pre-spec `auto / required / none`); the wire form is a bare
+    string for the first three and `{type:"tool", name:"..."}`
+    for the named-tool case.
+  - `Tool.execution.taskSupport` (`forbidden / optional / required`)
+    enforced server-side: required ⇒ a sync call is rejected;
+    forbidden ⇒ a task-augmented call is rejected. New
+    `Server::ToolMetadata` + `Server::tool(name, schema, handler,
+    ToolMetadata{...})` overload for declaring per-tool policy.
+  - Universal `_meta` envelope round-trips on every named result
+    type (Initialize / ListTools / CallTool / ListResources /
+    ReadResource / ListResourceTemplates / ListPrompts / GetPrompt /
+    CreateMessage) and on Implementation, Tool, Resource,
+    ResourceTemplate, ResourceLink, Prompt — important for
+    forward compat with `io.modelcontextprotocol/...` reserved
+    keys.
+  - `Icon` mixin + optional `icons` field on Implementation, Tool,
+    Resource, ResourceTemplate, ResourceLink, Prompt.
+  - `UrlElicitationRequiredErrorData` — the structured `data`
+    payload for JSON-RPC error code -32042 (the constant already
+    existed). Carries the URL-mode elicitations the client must
+    run before retrying.
+  - Streamable HTTP transport: SSE event IDs are captured and
+    sent back as `Last-Event-ID` on GET-stream reconnect so the
+    server can replay missed events. Server-supplied SSE `retry:`
+    field is honoured for the reconnect backoff (clamped to
+    [50, 60000] ms). On 404 from the GET stream, the client
+    clears its session id so the next outbound POST
+    re-initializes. On graceful close, the client sends an HTTP
+    `DELETE` to the MCP path so the server can free per-session
+    state immediately.
+  - HTTP server validates the inbound `MCP-Protocol-Version`
+    header — present-but-unsupported values produce 400.
+- **`examples/mcp_notes_server`** — a cool, usable MCP demo:
+  SQLite + FTS5 backed scratchpad that gives Claude (or any MCP
+  client) persistent, full-text-searchable memory across
+  sessions. Tools: write / read / list / search / delete / info.
+  Resource: `notes://all`. Globs and unconfirmed deletes route
+  through MCP elicitation for human confirmation. Build is gated
+  on system SQLite3 availability.
+
+### Notes
+
+- Final test count at 0.1.0: **220 tests** (218 active + 1
+  conditional skip) — clean on Rel + TSan + ASan locally and on
+  Linux/GCC via the worker1 parity check.
+- Linux GCC 13 with `-Werror=missing-field-initializers` is the
+  enforced strict reference build. Several rounds of
+  designated-initializer fixups land throughout the changelog
+  history above.
