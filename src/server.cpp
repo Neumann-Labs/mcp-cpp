@@ -378,12 +378,14 @@ void TaskStore::worker_started() noexcept {
 }
 
 void TaskStore::worker_finished() noexcept {
-    bool last = false;
-    {
-        std::lock_guard<std::mutex> lk(workers_mu_);
-        if (--workers_inflight_ == 0) last = true;
+    // Notify under the lock. If we dropped the lock first, shutdown()
+    // could see workers_inflight_ == 0, return, and ~TaskStore could
+    // destroy workers_cv_ while we were still inside notify_all() —
+    // a TSan-visible race against pthread_cond_destroy.
+    std::lock_guard<std::mutex> lk(workers_mu_);
+    if (--workers_inflight_ == 0) {
+        workers_cv_.notify_all();
     }
-    if (last) workers_cv_.notify_all();
 }
 
 void TaskStore::shutdown() {
