@@ -378,6 +378,63 @@ bool origin_allowed(const httplib::Request& req,
     return false;
 }
 
+// Build the WWW-Authenticate Bearer challenge value for 401 responses.
+// Spec: realm + (optional) resource_metadata="...".
+inline std::string build_bearer_challenge(const std::string& realm,
+                                           const std::string& metadata_url) {
+    std::string out = "Bearer realm=\"";
+    out += realm;
+    out += "\"";
+    if (!metadata_url.empty()) {
+        out += ", resource_metadata=\"";
+        out += metadata_url;
+        out += "\"";
+    }
+    return out;
+}
+
+// Validate the Authorization header against the host's bearer
+// validator (if configured). Returns true when the request is allowed
+// to proceed; if false, fills `res` with a 401 response and the
+// caller should bail.
+inline bool authorize(const httplib::Request&         req,
+                      httplib::Response&              res,
+                      const HttpServerHost::Options&  opts) {
+    if (!opts.bearer_validator) return true;
+    const auto it = req.headers.find("Authorization");
+    if (it == req.headers.end()) {
+        res.status = 401;
+        res.set_header("WWW-Authenticate",
+            build_bearer_challenge(opts.auth_realm,
+                                   opts.resource_metadata_url));
+        res.set_content("missing Authorization header", "text/plain");
+        return false;
+    }
+    constexpr std::string_view prefix = "Bearer ";
+    if (it->second.size() <= prefix.size() ||
+        it->second.compare(0, prefix.size(), prefix) != 0) {
+        res.status = 401;
+        res.set_header("WWW-Authenticate",
+            build_bearer_challenge(opts.auth_realm,
+                                   opts.resource_metadata_url));
+        res.set_content("expected Bearer scheme", "text/plain");
+        return false;
+    }
+    const std::string_view token{
+        it->second.data() + prefix.size(),
+        it->second.size() - prefix.size(),
+    };
+    if (!opts.bearer_validator(token)) {
+        res.status = 401;
+        res.set_header("WWW-Authenticate",
+            build_bearer_challenge(opts.auth_realm,
+                                   opts.resource_metadata_url));
+        res.set_content("invalid bearer token", "text/plain");
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 // =====================================================================
@@ -405,6 +462,7 @@ void HttpServerHost::start() {
             res.set_content("Origin not allowed", "text/plain");
             return;
         }
+        if (!authorize(req, res, host->opts_)) return;
 
         // Resolve or mint session id.
         std::string sid;
@@ -493,6 +551,7 @@ void HttpServerHost::start() {
             res.set_content("Origin not allowed", "text/plain");
             return;
         }
+        if (!authorize(req, res, host->opts_)) return;
         // Resolve the session by Mcp-Session-Id. Without one we have
         // no business holding open a stream — return 405 per spec
         // ("server does not offer an SSE stream").
@@ -553,6 +612,7 @@ void HttpServerHost::start() {
             res.set_content("Origin not allowed", "text/plain");
             return;
         }
+        if (!authorize(req, res, host->opts_)) return;
         auto it = req.headers.find("Mcp-Session-Id");
         if (it == req.headers.end()) {
             res.status = 400;
@@ -576,6 +636,24 @@ void HttpServerHost::start() {
         }
         res.status = 204;
     });
+
+    // RFC 9728 Protected Resource Metadata. We expose the same
+    // document at the canonical root well-known URI and the
+    // path-prefixed variant (the spec lets either form be used by
+    // resources living at non-root paths). Note: NOT gated by
+    // origin / Bearer — discovery is meant to be public.
+    if (opts_.resource_metadata.has_value()) {
+        const std::string body = opts_.resource_metadata->dump();
+        const auto handler = [body](const httplib::Request&,
+                                     httplib::Response& res) {
+            res.set_content(body, "application/json");
+        };
+        srv.Get("/.well-known/oauth-protected-resource", handler);
+        if (!opts_.path.empty() && opts_.path != "/") {
+            srv.Get("/.well-known/oauth-protected-resource" + opts_.path,
+                    handler);
+        }
+    }
 
     impl_->port = impl_->http.bind_to_any_port(opts_.host);
     if (impl_->port < 0) {

@@ -79,6 +79,28 @@ public:
         /// transport is request/response-only (no server-initiated
         /// traffic).
         bool open_get_stream = true;
+
+        // -------- 2025-11-25 OAuth 2.1 authorization (optional) --------
+        //
+        // When `access_token` is non-empty, every outbound POST and
+        // GET carries `Authorization: Bearer <access_token>` per
+        // RFC 6750. The SDK does NOT itself perform the OAuth flow
+        // (PKCE, dynamic client registration, code exchange) — the
+        // application is expected to obtain a token (via Protected
+        // Resource Metadata discovery + AS interaction) and supply
+        // it here.
+        std::optional<std::string> access_token;
+
+        /// Hook fired when the server replies 401/403 to a request.
+        /// Receives the raw `WWW-Authenticate` header value (may be
+        /// empty if the server omits it). The application can parse
+        /// it for `resource_metadata="<url>"` to drive discovery.
+        /// After this fires, the offending POST has already failed
+        /// and the transport delivers an error to the caller; the
+        /// callback is purely a side-channel notification.
+        std::function<void(int                status,
+                           std::string_view   www_authenticate)>
+            on_unauthorized;
     };
 
     explicit HttpClientTransport(Options opts);
