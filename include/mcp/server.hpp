@@ -70,6 +70,11 @@ public:
     /// Optional human-readable instructions returned in InitializeResult.
     Server& set_instructions(std::string s);
 
+    /// Maximum items per list response. Pages beyond this size return a
+    /// `nextCursor` that the client passes back to fetch the next page.
+    /// Default 0 means "no pagination — return everything in one page."
+    Server& set_page_size(std::size_t n);
+
     /// Register a tool with the given name. Replaces any prior handler.
     /// `input_schema` MUST be a JSON Schema object with "type": "object".
     Server& tool(std::string                    name,
@@ -183,6 +188,7 @@ private:
 
     Implementation                              server_info_;
     std::optional<std::string>                  instructions_;
+    std::size_t                                 page_size_{0};
     std::unordered_map<std::string, ToolEntry>  tools_;
     std::mutex                                  tools_mu_;
 

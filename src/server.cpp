@@ -25,6 +25,43 @@ Server& Server::set_instructions(std::string s) {
     return *this;
 }
 
+Server& Server::set_page_size(std::size_t n) {
+    page_size_ = n;
+    return *this;
+}
+
+namespace {
+// Decode an offset cursor. Empty / missing cursor means start at 0.
+// Throws Error(invalid_params) on malformed cursors.
+std::size_t decode_cursor(const std::optional<std::string>& cursor) {
+    if (!cursor.has_value() || cursor->empty()) return 0;
+    try {
+        return static_cast<std::size_t>(std::stoull(*cursor));
+    } catch (const std::exception&) {
+        throw Error{error_code::invalid_params,
+                    "invalid pagination cursor: " + *cursor};
+    }
+}
+
+// Slice [items_begin, items_end) into a page. If page_size is 0 or
+// items.size() <= offset+page_size, returns the remainder with no
+// nextCursor; otherwise returns a slice of size page_size and a
+// `nextCursor` for the next call.
+template <typename T>
+std::pair<std::vector<T>, std::optional<std::string>>
+paginate(const std::vector<T>& items, std::size_t offset, std::size_t page_size) {
+    if (offset >= items.size()) return {{}, std::nullopt};
+    if (page_size == 0 || offset + page_size >= items.size()) {
+        return {{items.begin() + static_cast<std::ptrdiff_t>(offset), items.end()},
+                std::nullopt};
+    }
+    const std::size_t next = offset + page_size;
+    return {{items.begin() + static_cast<std::ptrdiff_t>(offset),
+             items.begin() + static_cast<std::ptrdiff_t>(next)},
+            std::to_string(next)};
+}
+}  // namespace
+
 Server& Server::tool(std::string                    name,
                      nlohmann::json                 input_schema,
                      ToolHandler                    handler,
@@ -204,17 +241,17 @@ nlohmann::json Server::handle_list_tools(const nlohmann::json& params) {
     if (!initialized_.load(std::memory_order_acquire)) {
         throw Error{error_code::invalid_request, "not initialized"};
     }
-    // Pagination is not yet implemented; we ignore an inbound cursor and
-    // always return the full list with no nextCursor.
-    (void)params;
-
-    ListToolsResult res;
+    auto parsed = params.is_null()
+                      ? ListToolsRequestParams{}
+                      : params.get<ListToolsRequestParams>();
+    std::vector<Tool> all;
     {
         std::lock_guard<std::mutex> lk(tools_mu_);
-        res.tools.reserve(tools_.size());
-        for (const auto& [name, entry] : tools_) res.tools.push_back(entry.descriptor);
+        all.reserve(tools_.size());
+        for (const auto& [name, entry] : tools_) all.push_back(entry.descriptor);
     }
-    return res;
+    auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
+    return ListToolsResult{.tools = std::move(page), .next_cursor = std::move(next)};
 }
 
 nlohmann::json Server::handle_call_tool(const nlohmann::json& params) {
@@ -248,29 +285,34 @@ nlohmann::json Server::handle_list_resources(const nlohmann::json& params) {
     if (!initialized_.load(std::memory_order_acquire)) {
         throw Error{error_code::invalid_request, "not initialized"};
     }
-    (void)params;  // pagination cursor ignored in Phase 2
-
-    ListResourcesResult res;
+    auto parsed = params.is_null()
+                      ? ListResourcesRequestParams{}
+                      : params.get<ListResourcesRequestParams>();
+    std::vector<Resource> all;
     {
         std::lock_guard<std::mutex> lk(resources_mu_);
-        res.resources.reserve(resources_.size());
-        for (const auto& [uri, entry] : resources_) res.resources.push_back(entry.descriptor);
+        all.reserve(resources_.size());
+        for (const auto& [uri, entry] : resources_) all.push_back(entry.descriptor);
     }
-    return res;
+    auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
+    return ListResourcesResult{.resources = std::move(page), .next_cursor = std::move(next)};
 }
 
 nlohmann::json Server::handle_list_resource_templates(const nlohmann::json& params) {
     if (!initialized_.load(std::memory_order_acquire)) {
         throw Error{error_code::invalid_request, "not initialized"};
     }
-    (void)params;
-
-    ListResourceTemplatesResult res;
+    auto parsed = params.is_null()
+                      ? ListResourceTemplatesRequestParams{}
+                      : params.get<ListResourceTemplatesRequestParams>();
+    std::vector<ResourceTemplate> all;
     {
         std::lock_guard<std::mutex> lk(resources_mu_);
-        res.resource_templates = resource_templates_;
+        all = resource_templates_;
     }
-    return res;
+    auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
+    return ListResourceTemplatesResult{.resource_templates = std::move(page),
+                                       .next_cursor        = std::move(next)};
 }
 
 nlohmann::json Server::handle_read_resource(const nlohmann::json& params) {
@@ -306,14 +348,17 @@ nlohmann::json Server::handle_list_prompts(const nlohmann::json& params) {
     if (!initialized_.load(std::memory_order_acquire)) {
         throw Error{error_code::invalid_request, "not initialized"};
     }
-    (void)params;
-    ListPromptsResult res;
+    auto parsed = params.is_null()
+                      ? ListPromptsRequestParams{}
+                      : params.get<ListPromptsRequestParams>();
+    std::vector<Prompt> all;
     {
         std::lock_guard<std::mutex> lk(prompts_mu_);
-        res.prompts.reserve(prompts_.size());
-        for (const auto& [name, entry] : prompts_) res.prompts.push_back(entry.descriptor);
+        all.reserve(prompts_.size());
+        for (const auto& [name, entry] : prompts_) all.push_back(entry.descriptor);
     }
-    return res;
+    auto [page, next] = paginate(all, decode_cursor(parsed.cursor), page_size_);
+    return ListPromptsResult{.prompts = std::move(page), .next_cursor = std::move(next)};
 }
 
 nlohmann::json Server::handle_get_prompt(const nlohmann::json& params) {
