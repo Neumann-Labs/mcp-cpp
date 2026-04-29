@@ -201,6 +201,20 @@ nlohmann::json serialize_message(const JsonRpcMessage& m) {
 // Implementation
 // =====================================================================
 
+void to_json(nlohmann::json& j, const Icon& c) {
+    j = nlohmann::json::object();
+    j["src"] = c.src;
+    put_optional(j, "mimeType", c.mime_type);
+    put_optional(j, "sizes",    c.sizes);
+    put_optional(j, "theme",    c.theme);
+}
+void from_json(const nlohmann::json& j, Icon& c) {
+    c.src = require<std::string>(j, "src");
+    take_optional(j, "mimeType", c.mime_type);
+    take_optional(j, "sizes",    c.sizes);
+    take_optional(j, "theme",    c.theme);
+}
+
 void to_json(nlohmann::json& j, const Implementation& i) {
     j = nlohmann::json::object();
     j["name"]    = i.name;
@@ -208,6 +222,8 @@ void to_json(nlohmann::json& j, const Implementation& i) {
     put_optional(j, "title",       i.title);
     put_optional(j, "description", i.description);
     put_optional(j, "websiteUrl",  i.website_url);
+    put_optional(j, "icons",       i.icons);
+    put_optional(j, "_meta",       i.meta);
 }
 
 void from_json(const nlohmann::json& j, Implementation& i) {
@@ -216,6 +232,8 @@ void from_json(const nlohmann::json& j, Implementation& i) {
     take_optional(j, "title",       i.title);
     take_optional(j, "description", i.description);
     take_optional(j, "websiteUrl",  i.website_url);
+    take_optional(j, "icons",       i.icons);
+    take_optional_json(j, "_meta",  i.meta);
 }
 
 // =====================================================================
@@ -340,6 +358,7 @@ void to_json(nlohmann::json& j, const InitializeResult& r) {
     j["capabilities"]    = r.capabilities;
     j["serverInfo"]      = r.server_info;
     put_optional(j, "instructions", r.instructions);
+    put_optional(j, "_meta",        r.meta);
 }
 
 void from_json(const nlohmann::json& j, InitializeResult& r) {
@@ -347,6 +366,7 @@ void from_json(const nlohmann::json& j, InitializeResult& r) {
     r.capabilities     = j.at("capabilities").get<ServerCapabilities>();
     r.server_info      = j.at("serverInfo").get<Implementation>();
     take_optional(j, "instructions", r.instructions);
+    take_optional_json(j, "_meta",   r.meta);
 }
 
 // =====================================================================
@@ -485,6 +505,8 @@ void to_json(nlohmann::json& j, const Resource& r) {
     put_optional(j, "mimeType",    r.mime_type);
     put_optional(j, "annotations", r.annotations);
     put_optional(j, "size",        r.size);
+    put_optional(j, "icons",       r.icons);
+    put_optional(j, "_meta",       r.meta);
 }
 
 void from_json(const nlohmann::json& j, Resource& r) {
@@ -495,6 +517,8 @@ void from_json(const nlohmann::json& j, Resource& r) {
     take_optional(j, "mimeType",    r.mime_type);
     take_optional(j, "annotations", r.annotations);
     take_optional(j, "size",        r.size);
+    take_optional(j, "icons",       r.icons);
+    take_optional_json(j, "_meta",  r.meta);
 }
 
 void to_json(nlohmann::json& j, const ResourceTemplate& r) {
@@ -505,6 +529,8 @@ void to_json(nlohmann::json& j, const ResourceTemplate& r) {
     put_optional(j, "description", r.description);
     put_optional(j, "mimeType",    r.mime_type);
     put_optional(j, "annotations", r.annotations);
+    put_optional(j, "icons",       r.icons);
+    put_optional(j, "_meta",       r.meta);
 }
 
 void from_json(const nlohmann::json& j, ResourceTemplate& r) {
@@ -514,6 +540,8 @@ void from_json(const nlohmann::json& j, ResourceTemplate& r) {
     take_optional(j, "description", r.description);
     take_optional(j, "mimeType",    r.mime_type);
     take_optional(j, "annotations", r.annotations);
+    take_optional(j, "icons",       r.icons);
+    take_optional_json(j, "_meta",  r.meta);
 }
 
 void to_json(nlohmann::json& j, const ResourceLink& r) {
@@ -526,6 +554,8 @@ void to_json(nlohmann::json& j, const ResourceLink& r) {
     put_optional(j, "mimeType",    r.mime_type);
     put_optional(j, "annotations", r.annotations);
     put_optional(j, "size",        r.size);
+    put_optional(j, "icons",       r.icons);
+    put_optional(j, "_meta",       r.meta);
 }
 
 void from_json(const nlohmann::json& j, ResourceLink& r) {
@@ -536,6 +566,8 @@ void from_json(const nlohmann::json& j, ResourceLink& r) {
     take_optional(j, "mimeType",    r.mime_type);
     take_optional(j, "annotations", r.annotations);
     take_optional(j, "size",        r.size);
+    take_optional(j, "icons",       r.icons);
+    take_optional_json(j, "_meta",  r.meta);
 }
 
 void to_json(nlohmann::json& j, const EmbeddedResource& r) {
@@ -550,6 +582,51 @@ void from_json(const nlohmann::json& j, EmbeddedResource& r) {
     take_optional(j, "annotations", r.annotations);
 }
 
+void to_json(nlohmann::json& j, const ToolUseContent& c) {
+    j = nlohmann::json::object();
+    j["type"]  = "tool_use";
+    j["id"]    = c.id;
+    j["name"]  = c.name;
+    j["input"] = c.input;
+    put_optional(j, "annotations", c.annotations);
+}
+void from_json(const nlohmann::json& j, ToolUseContent& c) {
+    c.id    = require<std::string>(j, "id");
+    c.name  = require<std::string>(j, "name");
+    c.input = require<nlohmann::json>(j, "input");
+    take_optional(j, "annotations", c.annotations);
+}
+
+// PlainContentBlock is the variant exclusion of tool_use/tool_result.
+void to_json(nlohmann::json& j, const PlainContentBlock& c) {
+    std::visit([&j](const auto& v) { j = v; }, c);
+}
+void from_json(const nlohmann::json& j, PlainContentBlock& c) {
+    const auto t = require<std::string>(j, "type");
+    if (t == "text")          { c = j.get<TextContent>();      return; }
+    if (t == "image")         { c = j.get<ImageContent>();     return; }
+    if (t == "audio")         { c = j.get<AudioContent>();     return; }
+    if (t == "resource_link") { c = j.get<ResourceLink>();     return; }
+    if (t == "resource")      { c = j.get<EmbeddedResource>(); return; }
+    throw Error(error_code::parse_error,
+                std::string{"plain content block must not be \"" + t + "\""});
+}
+
+void to_json(nlohmann::json& j, const ToolResultContent& c) {
+    j = nlohmann::json::object();
+    j["type"]      = "tool_result";
+    j["toolUseId"] = c.tool_use_id;
+    j["content"]   = c.content;
+    put_optional(j, "isError",     c.is_error);
+    put_optional(j, "annotations", c.annotations);
+}
+void from_json(const nlohmann::json& j, ToolResultContent& c) {
+    c.tool_use_id = require<std::string>(j, "toolUseId");
+    c.content     = j.at("content").get<std::vector<PlainContentBlock>>();
+    take_optional(j, "isError",     c.is_error);
+    take_optional(j, "annotations", c.annotations);
+}
+
 void to_json(nlohmann::json& j, const ContentBlock& c) {
     std::visit([&j](const auto& v) { j = v; }, c);
 }
@@ -561,6 +638,8 @@ void from_json(const nlohmann::json& j, ContentBlock& c) {
     if (t == "audio")         { c = j.get<AudioContent>();     return; }
     if (t == "resource_link") { c = j.get<ResourceLink>();     return; }
     if (t == "resource")      { c = j.get<EmbeddedResource>(); return; }
+    if (t == "tool_use")      { c = j.get<ToolUseContent>();   return; }
+    if (t == "tool_result")   { c = j.get<ToolResultContent>();return; }
     throw Error(error_code::parse_error,
                 std::string{"unknown content block type: "} + t);
 }
@@ -586,6 +665,35 @@ void from_json(const nlohmann::json& j, ToolAnnotations& a) {
     take_optional(j, "openWorldHint",    a.open_world_hint);
 }
 
+void to_json(nlohmann::json& j, TaskSupport t) {
+    switch (t) {
+        case TaskSupport::forbidden: j = "forbidden"; return;
+        case TaskSupport::optional:  j = "optional";  return;
+        case TaskSupport::required:  j = "required";  return;
+    }
+    j = "optional";  // unreachable; defensive default
+}
+void from_json(const nlohmann::json& j, TaskSupport& t) {
+    const auto v = j.get<std::string>();
+    if      (v == "forbidden") t = TaskSupport::forbidden;
+    else if (v == "optional")  t = TaskSupport::optional;
+    else if (v == "required")  t = TaskSupport::required;
+    else throw Error(error_code::invalid_params,
+                     "tool execution: unknown taskSupport \"" + v + "\"");
+}
+
+void to_json(nlohmann::json& j, const ToolExecution& e) {
+    j = nlohmann::json::object();
+    j["taskSupport"] = e.task_support;
+}
+void from_json(const nlohmann::json& j, ToolExecution& e) {
+    if (auto it = j.find("taskSupport"); it != j.end()) {
+        e.task_support = it->get<TaskSupport>();
+    } else {
+        e.task_support = TaskSupport::optional;
+    }
+}
+
 void to_json(nlohmann::json& j, const Tool& t) {
     j = nlohmann::json::object();
     j["name"]        = t.name;
@@ -594,6 +702,9 @@ void to_json(nlohmann::json& j, const Tool& t) {
     put_optional(j, "description",  t.description);
     put_optional(j, "outputSchema", t.output_schema);
     put_optional(j, "annotations",  t.annotations);
+    put_optional(j, "icons",        t.icons);
+    put_optional(j, "execution",    t.execution);
+    put_optional(j, "_meta",        t.meta);
 }
 
 void from_json(const nlohmann::json& j, Tool& t) {
@@ -603,6 +714,9 @@ void from_json(const nlohmann::json& j, Tool& t) {
     take_optional      (j, "description",  t.description);
     take_optional_json (j, "outputSchema", t.output_schema);
     take_optional      (j, "annotations",  t.annotations);
+    take_optional      (j, "icons",        t.icons);
+    take_optional      (j, "execution",    t.execution);
+    take_optional_json (j, "_meta",        t.meta);
 }
 
 void to_json(nlohmann::json& j, const ListToolsRequestParams& p) {
@@ -618,11 +732,13 @@ void to_json(nlohmann::json& j, const ListToolsResult& r) {
     j = nlohmann::json::object();
     j["tools"] = r.tools;
     put_optional(j, "nextCursor", r.next_cursor);
+    put_optional(j, "_meta",      r.meta);
 }
 
 void from_json(const nlohmann::json& j, ListToolsResult& r) {
     r.tools = j.at("tools").get<std::vector<Tool>>();
-    take_optional(j, "nextCursor", r.next_cursor);
+    take_optional      (j, "nextCursor", r.next_cursor);
+    take_optional_json (j, "_meta",      r.meta);
 }
 
 void to_json(nlohmann::json& j, const CallToolRequestParams& p) {
@@ -643,12 +759,14 @@ void to_json(nlohmann::json& j, const CallToolResult& r) {
     j["content"] = r.content;
     put_optional(j, "structuredContent", r.structured_content);
     put_optional(j, "isError",           r.is_error);
+    put_optional(j, "_meta",             r.meta);
 }
 
 void from_json(const nlohmann::json& j, CallToolResult& r) {
     r.content = j.at("content").get<std::vector<ContentBlock>>();
     take_optional_json(j, "structuredContent", r.structured_content);
-    take_optional      (j, "isError",           r.is_error);
+    take_optional      (j, "isError",          r.is_error);
+    take_optional_json (j, "_meta",            r.meta);
 }
 
 // =====================================================================
@@ -667,10 +785,12 @@ void to_json(nlohmann::json& j, const ListResourcesResult& r) {
     j = nlohmann::json::object();
     j["resources"] = r.resources;
     put_optional(j, "nextCursor", r.next_cursor);
+    put_optional(j, "_meta",      r.meta);
 }
 void from_json(const nlohmann::json& j, ListResourcesResult& r) {
     r.resources = j.at("resources").get<std::vector<Resource>>();
-    take_optional(j, "nextCursor", r.next_cursor);
+    take_optional      (j, "nextCursor", r.next_cursor);
+    take_optional_json (j, "_meta",      r.meta);
 }
 
 void to_json(nlohmann::json& j, const ListResourceTemplatesRequestParams& p) {
@@ -685,10 +805,12 @@ void to_json(nlohmann::json& j, const ListResourceTemplatesResult& r) {
     j = nlohmann::json::object();
     j["resourceTemplates"] = r.resource_templates;
     put_optional(j, "nextCursor", r.next_cursor);
+    put_optional(j, "_meta",      r.meta);
 }
 void from_json(const nlohmann::json& j, ListResourceTemplatesResult& r) {
     r.resource_templates = j.at("resourceTemplates").get<std::vector<ResourceTemplate>>();
-    take_optional(j, "nextCursor", r.next_cursor);
+    take_optional      (j, "nextCursor", r.next_cursor);
+    take_optional_json (j, "_meta",      r.meta);
 }
 
 void to_json(nlohmann::json& j, const ReadResourceRequestParams& p) {
@@ -701,9 +823,11 @@ void from_json(const nlohmann::json& j, ReadResourceRequestParams& p) {
 void to_json(nlohmann::json& j, const ReadResourceResult& r) {
     j = nlohmann::json::object();
     j["contents"] = r.contents;
+    put_optional(j, "_meta", r.meta);
 }
 void from_json(const nlohmann::json& j, ReadResourceResult& r) {
     r.contents = j.at("contents").get<std::vector<ResourceContents>>();
+    take_optional_json(j, "_meta", r.meta);
 }
 
 void to_json(nlohmann::json& j, const SubscribeRequestParams& p) {
@@ -751,6 +875,8 @@ void to_json(nlohmann::json& j, const Prompt& p) {
     put_optional(j, "title",       p.title);
     put_optional(j, "description", p.description);
     if (p.arguments.has_value()) j["arguments"] = *p.arguments;
+    put_optional(j, "icons",       p.icons);
+    put_optional(j, "_meta",       p.meta);
 }
 void from_json(const nlohmann::json& j, Prompt& p) {
     p.name = require<std::string>(j, "name");
@@ -759,6 +885,8 @@ void from_json(const nlohmann::json& j, Prompt& p) {
     if (auto it = j.find("arguments"); it != j.end() && !it->is_null()) {
         p.arguments = it->get<std::vector<PromptArgument>>();
     }
+    take_optional      (j, "icons", p.icons);
+    take_optional_json (j, "_meta", p.meta);
 }
 
 void to_json(nlohmann::json& j, const PromptMessage& m) {
@@ -783,10 +911,12 @@ void to_json(nlohmann::json& j, const ListPromptsResult& r) {
     j = nlohmann::json::object();
     j["prompts"] = r.prompts;
     put_optional(j, "nextCursor", r.next_cursor);
+    put_optional(j, "_meta",      r.meta);
 }
 void from_json(const nlohmann::json& j, ListPromptsResult& r) {
     r.prompts = j.at("prompts").get<std::vector<Prompt>>();
-    take_optional(j, "nextCursor", r.next_cursor);
+    take_optional      (j, "nextCursor", r.next_cursor);
+    take_optional_json (j, "_meta",      r.meta);
 }
 
 void to_json(nlohmann::json& j, const GetPromptRequestParams& p) {
@@ -813,10 +943,12 @@ void to_json(nlohmann::json& j, const GetPromptResult& r) {
     j = nlohmann::json::object();
     put_optional(j, "description", r.description);
     j["messages"] = r.messages;
+    put_optional(j, "_meta",       r.meta);
 }
 void from_json(const nlohmann::json& j, GetPromptResult& r) {
     take_optional(j, "description", r.description);
     r.messages = j.at("messages").get<std::vector<PromptMessage>>();
+    take_optional_json (j, "_meta", r.meta);
 }
 
 // =====================================================================
@@ -986,27 +1118,61 @@ void from_json(const nlohmann::json& j, IncludeContext& c) {
 
 std::string_view to_string(ToolChoiceMode m) noexcept {
     switch (m) {
-        case ToolChoiceMode::auto_:    return "auto";
-        case ToolChoiceMode::required: return "required";
-        case ToolChoiceMode::none:     return "none";
+        case ToolChoiceMode::auto_: return "auto";
+        case ToolChoiceMode::any:   return "any";
+        case ToolChoiceMode::none:  return "none";
+        case ToolChoiceMode::tool:  return "tool";
     }
     return "?";
 }
 void to_json(nlohmann::json& j, const ToolChoiceMode& m) { j = std::string{to_string(m)}; }
 void from_json(const nlohmann::json& j, ToolChoiceMode& m) {
     const auto s = j.get<std::string>();
-    if (s == "auto")     m = ToolChoiceMode::auto_;
-    else if (s == "required") m = ToolChoiceMode::required;
+    if      (s == "auto")     m = ToolChoiceMode::auto_;
+    else if (s == "any")      m = ToolChoiceMode::any;
     else if (s == "none")     m = ToolChoiceMode::none;
+    else if (s == "tool")     m = ToolChoiceMode::tool;
     else throw Error(error_code::parse_error, "unknown toolChoice mode: " + s);
 }
 
+// Tagged-by-shape: when `mode == tool` we MUST emit the object form
+// `{ type: "tool", name: "..." }`. Other modes serialise as a bare
+// string. on the wire. Symmetrically, from_json accepts either form.
 void to_json(nlohmann::json& j, const ToolChoice& c) {
+    if (c.mode.has_value() && *c.mode == ToolChoiceMode::tool) {
+        j = nlohmann::json::object();
+        j["type"] = "tool";
+        if (c.name.has_value()) j["name"] = *c.name;
+        return;
+    }
+    if (c.mode.has_value()) {
+        j = std::string{to_string(*c.mode)};
+        return;
+    }
     j = nlohmann::json::object();
-    put_optional(j, "mode", c.mode);
 }
 void from_json(const nlohmann::json& j, ToolChoice& c) {
-    take_optional(j, "mode", c.mode);
+    if (j.is_string()) {
+        c.mode = j.get<ToolChoiceMode>();
+        return;
+    }
+    if (j.is_object()) {
+        if (auto it = j.find("type"); it != j.end() && it->is_string()) {
+            const auto t = it->get<std::string>();
+            if (t == "tool") {
+                c.mode = ToolChoiceMode::tool;
+                take_optional(j, "name", c.name);
+                return;
+            }
+            // Unknown object shape — fall through to the legacy
+            // `{ mode: ... }` form for forward compat.
+        }
+        take_optional(j, "mode", c.mode);
+        take_optional(j, "name", c.name);
+        return;
+    }
+    throw Error(error_code::parse_error,
+                "toolChoice must be a string or an object");
 }
 
 void to_json(nlohmann::json& j, const SamplingMessage& m) {
@@ -1040,6 +1206,8 @@ void to_json(nlohmann::json& j, const CreateMessageRequestParams& p) {
     put_optional(j, "temperature",      p.temperature);
     if (p.stop_sequences.has_value()) j["stopSequences"] = *p.stop_sequences;
     put_optional(j, "metadata",         p.metadata);
+    put_optional(j, "tools",            p.tools);
+    put_optional(j, "toolChoice",       p.tool_choice);
 }
 void from_json(const nlohmann::json& j, CreateMessageRequestParams& p) {
     p.messages = j.at("messages").get<std::vector<SamplingMessage>>();
@@ -1071,6 +1239,8 @@ void from_json(const nlohmann::json& j, CreateMessageRequestParams& p) {
         p.stop_sequences = it->get<std::vector<std::string>>();
     }
     take_optional_json(j, "metadata", p.metadata);
+    take_optional     (j, "tools",      p.tools);
+    take_optional     (j, "toolChoice", p.tool_choice);
 }
 
 void to_json(nlohmann::json& j, const CreateMessageResult& r) {
@@ -1083,6 +1253,7 @@ void to_json(nlohmann::json& j, const CreateMessageResult& r) {
     }
     j["model"] = r.model;
     put_optional(j, "stopReason", r.stop_reason);
+    put_optional(j, "_meta",      r.meta);
 }
 void from_json(const nlohmann::json& j, CreateMessageResult& r) {
     r.role  = j.at("role").get<Role>();
@@ -1095,7 +1266,8 @@ void from_json(const nlohmann::json& j, CreateMessageResult& r) {
         r.content = { c.get<ContentBlock>() };
     }
     r.model = require<std::string>(j, "model");
-    take_optional(j, "stopReason", r.stop_reason);
+    take_optional      (j, "stopReason", r.stop_reason);
+    take_optional_json (j, "_meta",      r.meta);
 }
 
 // =====================================================================
@@ -1301,6 +1473,14 @@ void to_json(nlohmann::json& j, const ElicitationCompleteNotificationParams& p) 
 void from_json(const nlohmann::json& j,
                ElicitationCompleteNotificationParams& p) {
     p.elicitation_id = require<std::string>(j, "elicitationId");
+}
+
+void to_json(nlohmann::json& j, const UrlElicitationRequiredErrorData& d) {
+    j = nlohmann::json::object();
+    j["elicitations"] = d.elicitations;
+}
+void from_json(const nlohmann::json& j, UrlElicitationRequiredErrorData& d) {
+    d.elicitations = j.at("elicitations").get<std::vector<ElicitUrlRequestParams>>();
 }
 
 // =====================================================================

@@ -526,6 +526,50 @@ TEST(TasksIntegration, TaskNotFoundIsInvalidRequest) {
     client.disconnect();
 }
 
+TEST(TasksIntegration, ExecutionTaskSupportEnforced) {
+    // Tool with execution.taskSupport=required must reject sync;
+    // taskSupport=forbidden must reject task-augmented.
+    auto p = mcp::test::make_in_memory_pair();
+    ServerThread srv(std::move(p.b), [](mcp::Server& s) {
+        s.enable_tasks();
+        s.tool("must_task", json{{"type", "object"}},
+               [](const json&) -> mcp::CallToolResult {
+                   return {.content = { mcp::TextContent{.text = "ok"} }};
+               },
+               mcp::Server::ToolMetadata{
+                   .execution = mcp::ToolExecution{
+                       .task_support = mcp::TaskSupport::required,
+                   },
+               });
+        s.tool("no_task", json{{"type", "object"}},
+               [](const json&) -> mcp::CallToolResult {
+                   return {.content = { mcp::TextContent{.text = "ok"} }};
+               },
+               mcp::Server::ToolMetadata{
+                   .execution = mcp::ToolExecution{
+                       .task_support = mcp::TaskSupport::forbidden,
+                   },
+               });
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "t", .version = "0"} };
+    client.connect(std::move(p.a));
+    (void)client.initialize().get();
+
+    // Required tool: a plain call must error; task-augmented succeeds.
+    EXPECT_THROW((void)client.call_tool("must_task").get(), mcp::Error);
+    auto env = client.call_tool_as_task("must_task", json{}).get();
+    (void)client.task_result(env.task.taskId).get();
+
+    // Forbidden tool: task-augmented must error; plain succeeds.
+    EXPECT_THROW((void)client.call_tool_as_task("no_task", json{}).get(),
+                 mcp::Error);
+    auto out = client.call_tool("no_task").get();
+    EXPECT_FALSE(out.is_error.value_or(false));
+
+    client.disconnect();
+}
+
 TEST(TasksIntegration, AugmentedCallWithoutEnableErrors) {
     auto p = mcp::test::make_in_memory_pair();
     ServerThread srv(std::move(p.b), [](mcp::Server& s) {

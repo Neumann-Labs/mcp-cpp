@@ -50,6 +50,16 @@ public:
     using ToolHandler =
         std::function<CallToolResult(const nlohmann::json& arguments)>;
 
+    /// Bag of optional per-tool metadata applied at registration. The
+    /// 2025-11-25 spec lets every tool advertise icons, structured
+    /// `_meta`, and an `execution.taskSupport` policy gating
+    /// task-augmented inbound calls.
+    struct ToolMetadata {
+        std::optional<std::vector<Icon>> icons;
+        std::optional<ToolExecution>     execution;
+        std::optional<nlohmann::json>    meta;
+    };
+
     /// Resource read handler. Receives the requested URI and returns
     /// the resource contents. Throwing mcp::Error is reported back as a
     /// JSON-RPC error.
@@ -89,6 +99,14 @@ public:
                  std::optional<std::string>     description = std::nullopt,
                  std::optional<ToolAnnotations> annotations = std::nullopt,
                  std::optional<nlohmann::json>  output_schema = std::nullopt);
+
+    /// Tool registration with the 2025-11-25 metadata bag. Use the
+    /// long-form constructor when you need to declare icons, _meta,
+    /// or an execution policy that gates task augmentation.
+    Server& tool(std::string  name,
+                 nlohmann::json input_schema,
+                 ToolHandler  handler,
+                 ToolMetadata meta);
 
     /// Register a resource the server exposes. The handler is invoked
     /// when a client calls `resources/read` for this URI.

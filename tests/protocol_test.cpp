@@ -425,4 +425,157 @@ TEST(Tools, ToolAnnotationsRoundTrip) {
     EXPECT_EQ(back.destructive_hint, a.destructive_hint);
 }
 
+// -------------------------------------------------------------------------
+// 2025-11-25 spec additions
+// -------------------------------------------------------------------------
+
+TEST(SpecAdditions, ToolUseContentRoundTrip) {
+    mcp::ToolUseContent c{
+        .id    = "tu_abc",
+        .name  = "search",
+        .input = json{{"q", "lima beans"}},
+    };
+    mcp::ContentBlock cb = c;
+    json j = cb;
+    EXPECT_EQ(j["type"], "tool_use");
+    EXPECT_EQ(j["id"],   "tu_abc");
+    EXPECT_EQ(j["name"], "search");
+    EXPECT_EQ(j["input"]["q"], "lima beans");
+    auto back = j.get<mcp::ContentBlock>();
+    ASSERT_TRUE(std::holds_alternative<mcp::ToolUseContent>(back));
+    EXPECT_EQ(std::get<mcp::ToolUseContent>(back).id, "tu_abc");
+}
+
+TEST(SpecAdditions, ToolResultContentRoundTrip) {
+    mcp::ToolResultContent c{
+        .tool_use_id = "tu_abc",
+        .content     = { mcp::TextContent{.text = "found 42"} },
+        .is_error    = false,
+    };
+    mcp::ContentBlock cb = c;
+    json j = cb;
+    EXPECT_EQ(j["type"],         "tool_result");
+    EXPECT_EQ(j["toolUseId"],    "tu_abc");
+    EXPECT_EQ(j["content"][0]["type"], "text");
+    EXPECT_EQ(j["isError"],      false);
+    auto back = j.get<mcp::ContentBlock>();
+    ASSERT_TRUE(std::holds_alternative<mcp::ToolResultContent>(back));
+    EXPECT_EQ(std::get<mcp::ToolResultContent>(back).tool_use_id, "tu_abc");
+}
+
+TEST(SpecAdditions, ToolResultRejectsNestedToolUseInContent) {
+    // PlainContentBlock parser MUST reject "tool_use" / "tool_result"
+    // — that's the spec rule preventing recursive content blocks.
+    json j = json{
+        {"type",      "tool_result"},
+        {"toolUseId", "x"},
+        {"content",   json::array({
+            json{{"type", "tool_use"}, {"id", "y"}, {"name", "z"},
+                 {"input", json::object()}},
+        })},
+    };
+    EXPECT_THROW((void)j.get<mcp::ContentBlock>(), mcp::Error);
+}
+
+TEST(SpecAdditions, SamplingToolsAndToolChoiceRoundTrip) {
+    mcp::CreateMessageRequestParams p{
+        .messages = { mcp::SamplingMessage{
+            .role    = mcp::Role::user,
+            .content = { mcp::TextContent{.text = "?"} },
+        }},
+        .max_tokens = 100,
+    };
+    p.tools = std::vector<mcp::Tool>{ mcp::Tool{
+        .name         = "search",
+        .input_schema = json{{"type", "object"}},
+    }};
+    p.tool_choice = mcp::ToolChoice{ .mode = mcp::ToolChoiceMode::any };
+
+    json j = p;
+    ASSERT_TRUE(j.contains("tools"));
+    EXPECT_EQ(j["tools"][0]["name"], "search");
+    EXPECT_EQ(j["toolChoice"], "any");
+
+    auto back = j.get<mcp::CreateMessageRequestParams>();
+    ASSERT_TRUE(back.tools.has_value());
+    EXPECT_EQ(back.tools->size(), 1u);
+    ASSERT_TRUE(back.tool_choice.has_value());
+    EXPECT_EQ(*back.tool_choice->mode, mcp::ToolChoiceMode::any);
+}
+
+TEST(SpecAdditions, ToolChoiceObjectFormForNamedTool) {
+    mcp::ToolChoice c{
+        .mode = mcp::ToolChoiceMode::tool,
+        .name = "search",
+    };
+    json j = c;
+    ASSERT_TRUE(j.is_object());
+    EXPECT_EQ(j["type"], "tool");
+    EXPECT_EQ(j["name"], "search");
+    auto back = j.get<mcp::ToolChoice>();
+    EXPECT_EQ(*back.mode, mcp::ToolChoiceMode::tool);
+    EXPECT_EQ(*back.name, "search");
+}
+
+TEST(SpecAdditions, IconsAndMetaOnImplementation) {
+    mcp::Implementation impl{
+        .name    = "x", .version = "1",
+        .icons   = std::vector<mcp::Icon>{{
+            .src = "https://example.com/icon.png", .mime_type = "image/png",
+        }},
+        .meta    = json{{"app.example/internal", 42}},
+    };
+    json j = impl;
+    EXPECT_EQ(j["icons"][0]["src"], "https://example.com/icon.png");
+    EXPECT_EQ(j["_meta"]["app.example/internal"], 42);
+    auto back = j.get<mcp::Implementation>();
+    ASSERT_TRUE(back.icons.has_value());
+    EXPECT_EQ(back.icons->front().src, "https://example.com/icon.png");
+    ASSERT_TRUE(back.meta.has_value());
+    EXPECT_EQ((*back.meta)["app.example/internal"], 42);
+}
+
+TEST(SpecAdditions, MetaOnInitializeResult) {
+    mcp::InitializeResult r{
+        .protocol_version = "2025-11-25",
+        .capabilities     = {},
+        .server_info      = mcp::Implementation{.name = "s", .version = "0"},
+        .meta             = json{{"x", 1}},
+    };
+    json j = r;
+    EXPECT_EQ(j["_meta"]["x"], 1);
+    auto back = j.get<mcp::InitializeResult>();
+    ASSERT_TRUE(back.meta.has_value());
+    EXPECT_EQ((*back.meta)["x"], 1);
+}
+
+TEST(SpecAdditions, ToolExecutionRoundTrip) {
+    mcp::Tool t{
+        .name         = "danger",
+        .input_schema = json{{"type", "object"}},
+        .execution    = mcp::ToolExecution{
+            .task_support = mcp::TaskSupport::required,
+        },
+    };
+    json j = t;
+    EXPECT_EQ(j["execution"]["taskSupport"], "required");
+    auto back = j.get<mcp::Tool>();
+    ASSERT_TRUE(back.execution.has_value());
+    EXPECT_EQ(back.execution->task_support, mcp::TaskSupport::required);
+}
+
+TEST(SpecAdditions, UrlElicitationRequiredErrorDataRoundTrip) {
+    mcp::UrlElicitationRequiredErrorData d{
+        .elicitations = { mcp::ElicitUrlRequestParams{
+            .message        = "Authorise via the linked URL",
+            .url            = "https://idp.example/auth",
+            .elicitation_id = "eid-1",
+        }},
+    };
+    json j = d;
+    EXPECT_EQ(j["elicitations"][0]["url"], "https://idp.example/auth");
+    auto back = j.get<mcp::UrlElicitationRequiredErrorData>();
+    EXPECT_EQ(back.elicitations.front().elicitation_id, "eid-1");
+}
+
 }  // namespace

@@ -134,12 +134,34 @@ using JsonRpcMessage = std::variant<JsonRpcRequest,
 // Implementation metadata
 // --------------------------------------------------------------------------
 
+/// 2025-11-25: optional icon descriptor used by Implementation,
+/// Tool, Resource, Prompt, and ResourceTemplate. Mirrors the spec's
+/// `Icon` shape — a URL/data pointer plus optional metadata.
+struct Icon {
+    /// `src` is either an absolute URL or a `data:` URL (RFC 2397).
+    std::string                src;
+    std::optional<std::string> mime_type;
+    /// Whitespace-delimited list of WxH dimensions ("16x16 32x32"),
+    /// matching HTML `<link rel=icon sizes>`.
+    std::optional<std::string> sizes;
+    /// "light" / "dark" / "monochrome" / app-defined.
+    std::optional<std::string> theme;
+};
+void to_json(nlohmann::json& j, const Icon& c);
+void from_json(const nlohmann::json& j, Icon& c);
+
 struct Implementation {
     std::string                name;
     std::optional<std::string> title;
     std::string                version;
     std::optional<std::string> description;
     std::optional<std::string> website_url;
+    /// 2025-11-25: optional list of icons describing this party.
+    std::optional<std::vector<Icon>> icons;
+    /// Top-level `_meta` envelope for protocol-level metadata.
+    /// Round-trips opaquely; spec reserves keys with the
+    /// `io.modelcontextprotocol/` prefix.
+    std::optional<nlohmann::json>    meta;
 };
 
 void to_json(nlohmann::json& j, const Implementation& i);
@@ -267,6 +289,7 @@ struct InitializeResult {
     ServerCapabilities         capabilities;
     Implementation             server_info;
     std::optional<std::string> instructions;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const InitializeResult& r);
 void from_json(const nlohmann::json& j, InitializeResult& r);
@@ -350,6 +373,9 @@ struct Resource {
     std::optional<std::string>  mime_type;
     std::optional<Annotations>  annotations;
     std::optional<std::int64_t> size;  // bytes
+    /// 2025-11-25 additions:
+    std::optional<std::vector<Icon>> icons;
+    std::optional<nlohmann::json>    meta;
 };
 void to_json(nlohmann::json& j, const Resource& r);
 void from_json(const nlohmann::json& j, Resource& r);
@@ -361,6 +387,9 @@ struct ResourceTemplate {
     std::optional<std::string> description;
     std::optional<std::string> mime_type;
     std::optional<Annotations> annotations;
+    /// 2025-11-25 additions:
+    std::optional<std::vector<Icon>> icons;
+    std::optional<nlohmann::json>    meta;
 };
 void to_json(nlohmann::json& j, const ResourceTemplate& r);
 void from_json(const nlohmann::json& j, ResourceTemplate& r);
@@ -373,6 +402,9 @@ struct ResourceLink {
     std::optional<std::string>  mime_type;
     std::optional<Annotations>  annotations;
     std::optional<std::int64_t> size;
+    /// 2025-11-25 additions:
+    std::optional<std::vector<Icon>> icons;
+    std::optional<nlohmann::json>    meta;
 };
 void to_json(nlohmann::json& j, const ResourceLink& r);
 void from_json(const nlohmann::json& j, ResourceLink& r);
@@ -384,14 +416,65 @@ struct EmbeddedResource {
 void to_json(nlohmann::json& j, const EmbeddedResource& r);
 void from_json(const nlohmann::json& j, EmbeddedResource& r);
 
+/// 2025-11-25: tool-use content block. Used in sampling messages to
+/// represent the assistant emitting a tool call (i.e. an
+/// agentic-loop step). Wire type discriminator: `"tool_use"`.
+struct ToolUseContent {
+    /// Identifier the assistant assigns to this call so the
+    /// corresponding `tool_result` block can reference it.
+    std::string                id;
+    /// Name of the tool being invoked. Should match a registered
+    /// `Tool.name` server-side.
+    std::string                name;
+    /// Arguments to the tool. JSON object matching the tool's
+    /// `inputSchema`.
+    nlohmann::json             input;
+    std::optional<Annotations> annotations;
+};
+void to_json(nlohmann::json& j, const ToolUseContent& c);
+void from_json(const nlohmann::json& j, ToolUseContent& c);
+
+/// Plain (non-tool) content blocks — the subset legal as the
+/// `content` of a ToolResultContent. The spec forbids nested
+/// tool_use/tool_result, and modelling the constraint in the type
+/// system catches malformed payloads at compile time.
+using PlainContentBlock = std::variant<TextContent,
+                                       ImageContent,
+                                       AudioContent,
+                                       ResourceLink,
+                                       EmbeddedResource>;
+void to_json(nlohmann::json& j, const PlainContentBlock& c);
+void from_json(const nlohmann::json& j, PlainContentBlock& c);
+
+/// 2025-11-25: tool-result content block. Carries the result of a
+/// previous `tool_use` block, referenced by `toolUseId`. Wire type
+/// discriminator: `"tool_result"`.
+struct ToolResultContent {
+    /// The `id` of the originating ToolUseContent.
+    std::string                     tool_use_id;
+    /// The tool's actual output. Restricted to plain content blocks
+    /// per spec (no nested tool_* allowed).
+    std::vector<PlainContentBlock>  content;
+    /// True when the tool errored. The content array typically
+    /// carries a TextContent describing the error in that case.
+    std::optional<bool>             is_error;
+    std::optional<Annotations>      annotations;
+};
+void to_json(nlohmann::json& j, const ToolResultContent& c);
+void from_json(const nlohmann::json& j, ToolResultContent& c);
+
 /// Content blocks used by tools/calls, prompts, and sampling. The
 /// type discriminator on the wire is `"text" | "image" | "audio"
-/// | "resource_link" | "resource"`.
+/// | "resource_link" | "resource" | "tool_use" | "tool_result"`.
+/// The last two are 2025-11-25 additions for agentic sampling
+/// loops.
 using ContentBlock = std::variant<TextContent,
                                   ImageContent,
                                   AudioContent,
                                   ResourceLink,
-                                  EmbeddedResource>;
+                                  EmbeddedResource,
+                                  ToolUseContent,
+                                  ToolResultContent>;
 
 void to_json(nlohmann::json& j, const ContentBlock& c);
 void from_json(const nlohmann::json& j, ContentBlock& c);
@@ -410,6 +493,21 @@ struct ToolAnnotations {
 void to_json(nlohmann::json& j, const ToolAnnotations& a);
 void from_json(const nlohmann::json& j, ToolAnnotations& a);
 
+/// 2025-11-25: per-tool execution policy. The receiver advertises
+/// whether a tool supports being task-augmented at all, optionally,
+/// or requires it.
+enum class TaskSupport { forbidden, optional, required };
+void to_json(nlohmann::json& j, TaskSupport t);
+void from_json(const nlohmann::json& j, TaskSupport& t);
+
+struct ToolExecution {
+    /// "forbidden" / "optional" / "required". Default is
+    /// "optional" when `execution` is absent.
+    TaskSupport task_support = TaskSupport::optional;
+};
+void to_json(nlohmann::json& j, const ToolExecution& e);
+void from_json(const nlohmann::json& j, ToolExecution& e);
+
 struct Tool {
     std::string                    name;
     std::optional<std::string>     title;
@@ -417,6 +515,10 @@ struct Tool {
     nlohmann::json                 input_schema;   // JSON Schema; type:"object"
     std::optional<nlohmann::json>  output_schema;  // optional JSON Schema
     std::optional<ToolAnnotations> annotations;
+    /// 2025-11-25 additions:
+    std::optional<std::vector<Icon>> icons;
+    std::optional<ToolExecution>     execution;
+    std::optional<nlohmann::json>    meta;
 };
 void to_json(nlohmann::json& j, const Tool& t);
 void from_json(const nlohmann::json& j, Tool& t);
@@ -430,6 +532,7 @@ void from_json(const nlohmann::json& j, ListToolsRequestParams& p);
 struct ListToolsResult {
     std::vector<Tool>          tools;
     std::optional<std::string> next_cursor;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const ListToolsResult& r);
 void from_json(const nlohmann::json& j, ListToolsResult& r);
@@ -449,6 +552,7 @@ struct CallToolResult {
     std::vector<ContentBlock>     content;
     std::optional<nlohmann::json> structured_content;  // matches outputSchema
     std::optional<bool>           is_error;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const CallToolResult& r);
 void from_json(const nlohmann::json& j, CallToolResult& r);
@@ -469,6 +573,7 @@ void from_json(const nlohmann::json& j, ListResourcesRequestParams& p);
 struct ListResourcesResult {
     std::vector<Resource>      resources;
     std::optional<std::string> next_cursor;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const ListResourcesResult& r);
 void from_json(const nlohmann::json& j, ListResourcesResult& r);
@@ -482,6 +587,7 @@ void from_json(const nlohmann::json& j, ListResourceTemplatesRequestParams& p);
 struct ListResourceTemplatesResult {
     std::vector<ResourceTemplate> resource_templates;
     std::optional<std::string>    next_cursor;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const ListResourceTemplatesResult& r);
 void from_json(const nlohmann::json& j, ListResourceTemplatesResult& r);
@@ -494,6 +600,7 @@ void from_json(const nlohmann::json& j, ReadResourceRequestParams& p);
 
 struct ReadResourceResult {
     std::vector<ResourceContents> contents;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const ReadResourceResult& r);
 void from_json(const nlohmann::json& j, ReadResourceResult& r);
@@ -544,6 +651,9 @@ struct Prompt {
     std::optional<std::string>        title;
     std::optional<std::string>        description;
     std::optional<std::vector<PromptArgument>> arguments;
+    /// 2025-11-25 additions:
+    std::optional<std::vector<Icon>> icons;
+    std::optional<nlohmann::json>    meta;
 };
 void to_json(nlohmann::json& j, const Prompt& p);
 void from_json(const nlohmann::json& j, Prompt& p);
@@ -564,6 +674,7 @@ void from_json(const nlohmann::json& j, ListPromptsRequestParams& p);
 struct ListPromptsResult {
     std::vector<Prompt>        prompts;
     std::optional<std::string> next_cursor;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const ListPromptsResult& r);
 void from_json(const nlohmann::json& j, ListPromptsResult& r);
@@ -578,6 +689,7 @@ void from_json(const nlohmann::json& j, GetPromptRequestParams& p);
 struct GetPromptResult {
     std::optional<std::string>  description;
     std::vector<PromptMessage>  messages;
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const GetPromptResult& r);
 void from_json(const nlohmann::json& j, GetPromptResult& r);
@@ -704,13 +816,26 @@ enum class IncludeContext { none, this_server, all_servers };
 void to_json(nlohmann::json& j, const IncludeContext& c);
 void from_json(const nlohmann::json& j, IncludeContext& c);
 
-enum class ToolChoiceMode { auto_, required, none };
+/// Sampling tool-choice mode (2025-11-25). The spec lets the
+/// requester force / forbid / pin tool use:
+///   - "auto"   — model decides whether to call tools (default)
+///   - "any"    — model MUST call at least one tool
+///   - "none"   — model MUST NOT call tools
+///   - "tool"   — model MUST call the specific tool named
+enum class ToolChoiceMode { auto_, any, none, tool };
 [[nodiscard]] std::string_view to_string(ToolChoiceMode m) noexcept;
 void to_json(nlohmann::json& j, const ToolChoiceMode& m);
 void from_json(const nlohmann::json& j, ToolChoiceMode& m);
 
+/// Tool choice. The wire shape is either a bare string ("auto" |
+/// "any" | "none") or an object `{ type: "tool", name: "..." }`
+/// for the named-tool case. We model it as a struct with both
+/// fields optional; serialise emits the object form when
+/// `mode == tool` AND `name` is present.
 struct ToolChoice {
     std::optional<ToolChoiceMode> mode;
+    /// Required when mode == ToolChoiceMode::tool.
+    std::optional<std::string>    name;
 };
 void to_json(nlohmann::json& j, const ToolChoice& c);
 void from_json(const nlohmann::json& j, ToolChoice& c);
@@ -740,6 +865,13 @@ struct CreateMessageRequestParams {
     std::int64_t                      max_tokens{};   // required by spec
     std::optional<std::vector<std::string>> stop_sequences;
     std::optional<nlohmann::json>     metadata;
+    /// 2025-11-25: tools the assistant may call during this
+    /// sampling. Server side is expected to translate to the
+    /// underlying LLM's tool-calling shape; `Tool::input_schema`
+    /// is the JSON Schema the model is told to fit.
+    std::optional<std::vector<Tool>>  tools;
+    /// 2025-11-25: how to constrain tool calling.
+    std::optional<ToolChoice>         tool_choice;
 };
 void to_json(nlohmann::json& j, const CreateMessageRequestParams& p);
 void from_json(const nlohmann::json& j, CreateMessageRequestParams& p);
@@ -749,6 +881,8 @@ struct CreateMessageResult {
     std::vector<ContentBlock>    content;
     std::string                  model;
     std::optional<std::string>   stop_reason;
+    /// Top-level _meta envelope for protocol-level metadata.
+    std::optional<nlohmann::json> meta;
 };
 void to_json(nlohmann::json& j, const CreateMessageResult& r);
 void from_json(const nlohmann::json& j, CreateMessageResult& r);
@@ -897,6 +1031,21 @@ inline constexpr std::string_view method_elicitation_create
     = "elicitation/create";
 inline constexpr std::string_view method_notifications_elicitation_complete
     = "notifications/elicitation/complete";
+
+/// 2025-11-25: structured `data` for the JSON-RPC error code
+/// `error_code::url_elicitation_required` (-32042). Sent by the
+/// server when an in-flight request can't proceed without the
+/// user finishing one or more URL-mode elicitation flows. The
+/// client MAY drive the URL flows out-of-band, then retry the
+/// original request.
+struct UrlElicitationRequiredErrorData {
+    /// One or more URL-mode elicitations the client must run.
+    /// Each element is the params shape of an `elicitation/create`
+    /// request — message + url + elicitationId.
+    std::vector<ElicitUrlRequestParams> elicitations;
+};
+void to_json(nlohmann::json& j, const UrlElicitationRequiredErrorData& d);
+void from_json(const nlohmann::json& j, UrlElicitationRequiredErrorData& d);
 
 // --------------------------------------------------------------------------
 // Tasks (long-running operations)

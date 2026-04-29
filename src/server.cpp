@@ -552,6 +552,22 @@ Server& Server::tool(std::string                    name,
     return *this;
 }
 
+Server& Server::tool(std::string    name,
+                     nlohmann::json input_schema,
+                     ToolHandler    handler,
+                     ToolMetadata   meta) {
+    Tool t{
+        .name          = name,
+        .input_schema  = std::move(input_schema),
+        .icons         = std::move(meta.icons),
+        .execution     = std::move(meta.execution),
+        .meta          = std::move(meta.meta),
+    };
+    std::lock_guard<std::mutex> lk(tools_mu_);
+    tools_[name] = ToolEntry{std::move(t), std::move(handler)};
+    return *this;
+}
+
 Server& Server::resource(Resource descriptor, ResourceReadHandler handler) {
     std::lock_guard<std::mutex> lk(resources_mu_);
     const std::string uri = descriptor.uri;
@@ -810,6 +826,7 @@ nlohmann::json Server::handle_call_tool(const nlohmann::json& params) {
     }
 
     ToolHandler h;
+    std::optional<TaskSupport> tool_task_support;
     {
         std::lock_guard<std::mutex> lk(tools_mu_);
         auto it = tools_.find(parsed.name);
@@ -818,8 +835,29 @@ nlohmann::json Server::handle_call_tool(const nlohmann::json& params) {
                         "tool not found: " + parsed.name};
         }
         h = it->second.handler;
+        if (it->second.descriptor.execution.has_value()) {
+            tool_task_support = it->second.descriptor.execution->task_support;
+        }
     }
     const auto args = parsed.arguments.value_or(nlohmann::json::object());
+
+    // 2025-11-25: per-tool execution policy gates task augmentation.
+    // When the tool declares `execution.taskSupport == "required"`, a
+    // synchronous (non-augmented) call is rejected. When it declares
+    // `forbidden`, an augmented call is rejected. Default ("optional"
+    // / absent) accepts either path.
+    if (tool_task_support.has_value()) {
+        if (*tool_task_support == TaskSupport::required && !parsed.task.has_value()) {
+            throw Error{error_code::invalid_request,
+                        "tool \"" + parsed.name +
+                        "\" requires task augmentation; pass `task` in params"};
+        }
+        if (*tool_task_support == TaskSupport::forbidden && parsed.task.has_value()) {
+            throw Error{error_code::invalid_request,
+                        "tool \"" + parsed.name +
+                        "\" forbids task augmentation"};
+        }
+    }
 
     if (parsed.task.has_value()) {
         if (!tasks_) {
