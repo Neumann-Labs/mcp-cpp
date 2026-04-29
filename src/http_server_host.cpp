@@ -465,6 +465,15 @@ inline std::string_view trim_ows(std::string_view s) noexcept {
     return s;
 }
 
+// Per the 2025-11-25 spec: a request whose `MCP-Protocol-Version`
+// header is present but unsupported MUST be rejected with 400. We
+// know about three published revisions; the absence of the header
+// is allowed (the spec lets clients omit it for the initial
+// initialize call).
+inline bool valid_protocol_version_header(std::string_view v) noexcept {
+    return v == "2025-03-26" || v == "2025-06-18" || v == "2025-11-25";
+}
+
 // Validate the Authorization header against the host's bearer
 // validator (if configured). Returns true when the request is allowed
 // to proceed; if false, fills `res` with a 401/403 response.
@@ -616,6 +625,16 @@ void HttpServerHost::start() {
         if (!origin_allowed(req, host->opts_.allowed_origins)) {
             res.status = 403;
             res.set_content("Origin not allowed", "text/plain");
+            return;
+        }
+        // Spec MUST: a present-but-unsupported MCP-Protocol-Version
+        // is a 400. Header is allowed to be absent.
+        if (auto it = req.headers.find("MCP-Protocol-Version");
+            it != req.headers.end() &&
+            !valid_protocol_version_header(it->second)) {
+            res.status = 400;
+            res.set_content("unsupported MCP-Protocol-Version: " + it->second,
+                            "text/plain");
             return;
         }
         if (!authorize(req, res, host->opts_)) return;

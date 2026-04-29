@@ -15,6 +15,8 @@
 #include "mcp/log.hpp"
 #include "mcp/protocol.hpp"
 
+#include <httplib.h>
+
 #include <cstdlib>
 
 #include <gtest/gtest.h>
@@ -228,6 +230,33 @@ TEST(HttpEndToEnd, SessionIdReusedAcrossCalls) {
     EXPECT_EQ(host.active_sessions(), 1u);
 
     client.disconnect();
+    host.stop();
+}
+
+TEST(HttpEndToEnd, UnsupportedMcpProtocolVersionIs400) {
+    // Spec MUST: a request with a present-but-unsupported
+    // MCP-Protocol-Version header is rejected with 400.
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "127.0.0.1",
+            .path = "/mcp",
+        },
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    auto res = cli.Post("/mcp",
+        {{"Content-Type",         "application/json"},
+         {"MCP-Protocol-Version", "1999-01-01"}},
+        R"({"jsonrpc":"2.0","method":"initialize","id":1})",
+        "application/json");
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 400);
+    EXPECT_NE(res->body.find("unsupported MCP-Protocol-Version"),
+              std::string::npos);
+
     host.stop();
 }
 
