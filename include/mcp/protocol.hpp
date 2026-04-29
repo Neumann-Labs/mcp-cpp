@@ -674,9 +674,15 @@ void from_json(const nlohmann::json& j, ToolChoice& c);
 /// A message in a sampling exchange. Phase 3 supports text/image/audio
 /// content; tool_use and tool_result variants land in Phase 4 alongside
 /// the rest of the agentic-loop primitives.
+///
+/// The spec's `content` field accepts either a single block or an array
+/// of blocks; we always model it as a vector internally so multi-block
+/// messages don't get silently truncated. On the wire we emit an array
+/// when there's more than one block and a single-block object otherwise
+/// (matching what nearly every existing implementation produces).
 struct SamplingMessage {
-    Role         role;
-    ContentBlock content;  // single block per spec, also accept array on parse
+    Role                      role;
+    std::vector<ContentBlock> content;
 };
 void to_json(nlohmann::json& j, const SamplingMessage& m);
 void from_json(const nlohmann::json& j, SamplingMessage& m);
@@ -696,7 +702,7 @@ void from_json(const nlohmann::json& j, CreateMessageRequestParams& p);
 
 struct CreateMessageResult {
     Role                         role;
-    ContentBlock                 content;
+    std::vector<ContentBlock>    content;
     std::string                  model;
     std::optional<std::string>   stop_reason;
 };

@@ -10,16 +10,20 @@
 #include "mcp/error.hpp"
 #include "mcp/protocol.hpp"
 #include "mcp/server.hpp"
+#include "mcp/stdio_transport.hpp"
 
 #include <gtest/gtest.h>
 
 #include <nlohmann/json.hpp>
+
+#include <unistd.h>
 
 #include <chrono>
 #include <future>
 #include <memory>
 #include <string>
 #include <thread>
+#include <variant>
 
 namespace {
 
@@ -160,6 +164,89 @@ TEST(AuditRegression, MalformedListToolsParamsYieldsInvalidParams) {
         EXPECT_NE(e.code(), mcp::error_code::internal_error);
     }
     session->close();
+}
+
+// -------------------------------------------------------------------------
+// SamplingMessage content array preservation (audit spec #3)
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, SamplingMessageContentArrayPreservesAll) {
+    json j = R"({
+        "role":"user",
+        "content":[
+            {"type":"text","text":"a"},
+            {"type":"text","text":"b"}
+        ]
+    })"_json;
+    auto m = j.get<mcp::SamplingMessage>();
+    ASSERT_EQ(m.content.size(), 2u);
+    EXPECT_EQ(std::get<mcp::TextContent>(m.content[0]).text, "a");
+    EXPECT_EQ(std::get<mcp::TextContent>(m.content[1]).text, "b");
+}
+
+TEST(AuditRegression, SamplingMessageSingleBlockOnWire) {
+    mcp::SamplingMessage m{
+        .role    = mcp::Role::assistant,
+        .content = { mcp::TextContent{.text = "x"} },
+    };
+    json j = m;
+    EXPECT_TRUE(j["content"].is_object())
+        << "single-element content should serialize as an object, "
+           "matching what most peers emit";
+    auto back = j.get<mcp::SamplingMessage>();
+    EXPECT_EQ(back.content.size(), 1u);
+}
+
+// -------------------------------------------------------------------------
+// RequestId / ProgressToken accept whole-number floats (audit spec #7)
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, RequestIdAcceptsWholeFloat) {
+    auto id = json::parse("1.0").get<mcp::RequestId>();
+    EXPECT_TRUE(id.is_integer());
+    EXPECT_EQ(id.as_integer(), 1);
+}
+
+TEST(AuditRegression, RequestIdRejectsFractionalFloat) {
+    EXPECT_THROW({ (void)json::parse("1.5").get<mcp::RequestId>(); }, mcp::Error);
+}
+
+TEST(AuditRegression, ProgressTokenAcceptsWholeFloat) {
+    auto t = json::parse("42.0").get<mcp::ProgressToken>();
+    EXPECT_TRUE(t.is_integer());
+    EXPECT_EQ(t.as_integer(), 42);
+}
+
+// -------------------------------------------------------------------------
+// Stdio CR stripping (audit spec #6) — exercised via in-memory pipe
+// -------------------------------------------------------------------------
+
+TEST(AuditRegression, StdioStripsCrBeforeNewline) {
+    int t2[2];
+    int f2[2];
+    ASSERT_EQ(::pipe(t2), 0);
+    ASSERT_EQ(::pipe(f2), 0);
+    mcp::StdioTransport::Options opts{};
+    opts.read_fd = t2[0]; opts.write_fd = f2[1]; opts.owns_fds = true;
+
+    auto transport = std::make_unique<mcp::StdioTransport>(opts);
+    std::promise<std::string> got;
+    auto fut = got.get_future();
+    transport->on_message([&](std::string s) {
+        try { got.set_value(std::move(s)); } catch (...) {}
+    });
+    transport->start();
+
+    const std::string crlf = "{\"k\":1}\r\n";
+    ASSERT_EQ(::write(t2[1], crlf.data(), crlf.size()),
+              static_cast<ssize_t>(crlf.size()));
+
+    EXPECT_EQ(fut.wait_for(2s), std::future_status::ready);
+    auto frame = fut.get();
+    EXPECT_EQ(frame, "{\"k\":1}");
+
+    transport->close();
+    ::close(t2[1]); ::close(f2[0]);
 }
 
 // -------------------------------------------------------------------------

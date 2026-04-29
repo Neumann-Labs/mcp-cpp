@@ -54,7 +54,7 @@ TEST(Sampling, CreateMessageRoundTrip) {
     mcp::CreateMessageRequestParams p{
         .messages = { mcp::SamplingMessage{
             .role    = mcp::Role::user,
-            .content = mcp::TextContent{.text = "hi"},
+            .content = { mcp::TextContent{.text = "hi"} },
         }},
         .model_preferences = mcp::ModelPreferences{
             .hints                 = std::vector<mcp::ModelHint>{{.name = "claude-3-5-sonnet"}},
@@ -74,7 +74,7 @@ TEST(Sampling, IncludeContextRoundTrip) {
     mcp::CreateMessageRequestParams p{
         .messages         = { mcp::SamplingMessage{
             .role    = mcp::Role::user,
-            .content = mcp::TextContent{.text = "x"},
+            .content = { mcp::TextContent{.text = "x"} },
         }},
         .include_context  = mcp::IncludeContext::all_servers,
         .max_tokens       = 1,
@@ -88,7 +88,7 @@ TEST(Sampling, IncludeContextRoundTrip) {
 TEST(Sampling, CreateMessageResultRoundTrip) {
     mcp::CreateMessageResult r{
         .role        = mcp::Role::assistant,
-        .content     = mcp::TextContent{.text = "answer"},
+        .content     = { mcp::TextContent{.text = "answer"} },
         .model       = "claude-3-5-sonnet-20241022",
         .stop_reason = "endTurn",
     };
@@ -160,7 +160,7 @@ TEST(SamplingIntegration, ToolHandlerCanRoundTripThroughClient) {
                    mcp::CreateMessageRequestParams params{
                        .messages = { mcp::SamplingMessage{
                            .role    = mcp::Role::user,
-                           .content = mcp::TextContent{.text = q},
+                           .content = { mcp::TextContent{.text = q} },
                        }},
                        .max_tokens = 100,
                    };
@@ -168,7 +168,7 @@ TEST(SamplingIntegration, ToolHandlerCanRoundTripThroughClient) {
                    auto res = fut.get();
                    return mcp::CallToolResult{
                        .content = { mcp::TextContent{
-                           .text = "got: " + std::get<mcp::TextContent>(res.content).text,
+                           .text = "got: " + std::get<mcp::TextContent>(res.content.at(0)).text,
                        }},
                    };
                });
@@ -178,10 +178,11 @@ TEST(SamplingIntegration, ToolHandlerCanRoundTripThroughClient) {
     client.connect(std::move(p.a));
     client.set_sampling_handler(
         [](const mcp::CreateMessageRequestParams& req) -> mcp::CreateMessageResult {
-            const std::string in = std::get<mcp::TextContent>(req.messages.at(0).content).text;
+            const std::string in =
+                std::get<mcp::TextContent>(req.messages.at(0).content.at(0)).text;
             return mcp::CreateMessageResult{
                 .role    = mcp::Role::assistant,
-                .content = mcp::TextContent{.text = "echo:" + in},
+                .content = { mcp::TextContent{.text = "echo:" + in} },
                 .model   = "test-model",
             };
         });
@@ -205,7 +206,7 @@ TEST(SamplingIntegration, MissingHandlerYieldsError) {
                        (void)s.sample(mcp::CreateMessageRequestParams{
                            .messages = { mcp::SamplingMessage{
                                .role    = mcp::Role::user,
-                               .content = mcp::TextContent{.text = "x"},
+                               .content = { mcp::TextContent{.text = "x"} },
                            }},
                            .max_tokens = 1,
                        }).get();

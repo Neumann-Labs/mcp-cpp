@@ -76,6 +76,17 @@ void from_json(const nlohmann::json& j, RequestId& id) {
         id = RequestId{j.get<std::string>()};
     } else if (j.is_number_integer()) {
         id = RequestId{j.get<std::int64_t>()};
+    } else if (j.is_number_float()) {
+        // The spec types `id` as `string | number`; some JS clients
+        // emit small whole numbers as floats (`1.0`) because JS has
+        // no integer literal. Accept whole floats; reject fractional.
+        const double v = j.get<double>();
+        const auto truncated = static_cast<std::int64_t>(v);
+        if (static_cast<double>(truncated) != v) {
+            throw Error(error_code::parse_error,
+                        "JSON-RPC id must be an integer (got fractional number)");
+        }
+        id = RequestId{truncated};
     } else {
         throw Error(error_code::parse_error,
                     "JSON-RPC id must be a string or integer");
@@ -833,10 +844,21 @@ void to_json(nlohmann::json& j, const ProgressToken& t) {
     else                j = t.as_integer();
 }
 void from_json(const nlohmann::json& j, ProgressToken& t) {
-    if (j.is_string())              t = ProgressToken{j.get<std::string>()};
-    else if (j.is_number_integer()) t = ProgressToken{j.get<std::int64_t>()};
-    else throw Error(error_code::parse_error,
-                     "progressToken must be a string or integer");
+    if (j.is_string())              { t = ProgressToken{j.get<std::string>()};   return; }
+    if (j.is_number_integer())      { t = ProgressToken{j.get<std::int64_t>()};  return; }
+    if (j.is_number_float()) {
+        // Same rationale as RequestId — accept whole-number floats.
+        const double v = j.get<double>();
+        const auto truncated = static_cast<std::int64_t>(v);
+        if (static_cast<double>(truncated) != v) {
+            throw Error(error_code::parse_error,
+                        "progressToken must be an integer (got fractional number)");
+        }
+        t = ProgressToken{truncated};
+        return;
+    }
+    throw Error(error_code::parse_error,
+                "progressToken must be a string or integer");
 }
 
 void to_json(nlohmann::json& j, const ProgressNotificationParams& p) {
@@ -983,21 +1005,22 @@ void from_json(const nlohmann::json& j, ToolChoice& c) {
 
 void to_json(nlohmann::json& j, const SamplingMessage& m) {
     j = nlohmann::json::object();
-    j["role"]    = m.role;
-    j["content"] = m.content;
+    j["role"] = m.role;
+    if (m.content.size() == 1) {
+        j["content"] = m.content.front();
+    } else {
+        j["content"] = m.content;
+    }
 }
 void from_json(const nlohmann::json& j, SamplingMessage& m) {
     m.role = j.at("role").get<Role>();
     const auto& c = j.at("content");
-    // Accept both single block and array (single-element array).
     if (c.is_array()) {
-        if (c.empty()) {
-            throw Error(error_code::parse_error,
-                        "SamplingMessage.content array must not be empty");
-        }
-        m.content = c[0].get<ContentBlock>();
+        m.content.clear();
+        m.content.reserve(c.size());
+        for (const auto& block : c) m.content.push_back(block.get<ContentBlock>());
     } else {
-        m.content = c.get<ContentBlock>();
+        m.content = { c.get<ContentBlock>() };
     }
 }
 
@@ -1046,15 +1069,26 @@ void from_json(const nlohmann::json& j, CreateMessageRequestParams& p) {
 
 void to_json(nlohmann::json& j, const CreateMessageResult& r) {
     j = nlohmann::json::object();
-    j["role"]    = r.role;
-    j["content"] = r.content;
-    j["model"]   = r.model;
+    j["role"]  = r.role;
+    if (r.content.size() == 1) {
+        j["content"] = r.content.front();
+    } else {
+        j["content"] = r.content;
+    }
+    j["model"] = r.model;
     put_optional(j, "stopReason", r.stop_reason);
 }
 void from_json(const nlohmann::json& j, CreateMessageResult& r) {
-    r.role    = j.at("role").get<Role>();
-    r.content = j.at("content").get<ContentBlock>();
-    r.model   = require<std::string>(j, "model");
+    r.role  = j.at("role").get<Role>();
+    const auto& c = j.at("content");
+    if (c.is_array()) {
+        r.content.clear();
+        r.content.reserve(c.size());
+        for (const auto& block : c) r.content.push_back(block.get<ContentBlock>());
+    } else {
+        r.content = { c.get<ContentBlock>() };
+    }
+    r.model = require<std::string>(j, "model");
     take_optional(j, "stopReason", r.stop_reason);
 }
 

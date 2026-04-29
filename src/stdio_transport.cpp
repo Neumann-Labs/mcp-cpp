@@ -201,6 +201,14 @@ void StdioTransport::read_loop() noexcept {
             for (ssize_t i = 0; i < n; ++i) {
                 const char c = chunk[i];
                 if (c == '\n') {
+                    // Tolerate CRLF: peers writing through Windows-style
+                    // line endings get their trailing \r stripped before
+                    // we hand the buffer up. Per MCP spec the delimiter
+                    // is '\n', so this keeps interop with peers that
+                    // happen to ship CRLF without a fight.
+                    if (!buffer.empty() && buffer.back() == '\r') {
+                        buffer.pop_back();
+                    }
                     if (!buffer.empty() && on_message_) {
                         try {
                             on_message_(std::move(buffer));
