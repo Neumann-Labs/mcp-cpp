@@ -548,6 +548,103 @@ TEST(HttpOAuth, ClientSetAccessTokenRotates) {
     host.stop();
 }
 
+TEST(HttpOAuth, BindToNonLoopbackRequiresAllowInsecureHttp) {
+    // Bearer auth + non-loopback host + plain HTTP without the
+    // explicit acknowledgement throws at start().
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "0.0.0.0",
+            .path = "/mcp",
+            .bearer_validator = [](std::string_view) {
+                return mcp::HttpServerHost::Options::BearerOutcome{
+                    .status = mcp::HttpServerHost::Options::BearerStatus::allow,
+                };
+            },
+        },
+        [](mcp::Server&) {},
+    };
+    EXPECT_THROW(host.start(), std::invalid_argument);
+}
+
+TEST(HttpOAuth, BindToNonLoopbackWithAllowInsecureHttpStartsCleanly) {
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "127.0.0.1",
+            .path = "/mcp",
+            .bearer_validator = [](std::string_view) {
+                return mcp::HttpServerHost::Options::BearerOutcome{
+                    .status = mcp::HttpServerHost::Options::BearerStatus::allow,
+                };
+            },
+            // Loopback is fine without the flag too — exercise both
+            // path-prefix variants in one go by setting it.
+            .allow_insecure_http = true,
+        },
+        [](mcp::Server&) {},
+    };
+    EXPECT_NO_THROW(host.start());
+    host.stop();
+}
+
+TEST(HttpOAuth, OptionsPreflightAllowsAllowedOrigin) {
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "127.0.0.1",
+            .path = "/mcp",
+            .allowed_origins = {"https://allowed.example"},
+        },
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    cli.set_default_headers({
+        {"Origin", "https://allowed.example"},
+        {"Access-Control-Request-Method", "POST"},
+        {"Access-Control-Request-Headers", "Authorization, Content-Type"},
+    });
+    auto res = cli.Options("/mcp");
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 204);
+    auto acao = res->headers.find("Access-Control-Allow-Origin");
+    ASSERT_NE(acao, res->headers.end());
+    EXPECT_EQ(acao->second, "https://allowed.example");
+    auto acam = res->headers.find("Access-Control-Allow-Methods");
+    ASSERT_NE(acam, res->headers.end());
+    EXPECT_NE(acam->second.find("POST"),    std::string::npos);
+    EXPECT_NE(acam->second.find("DELETE"),  std::string::npos);
+    auto acah = res->headers.find("Access-Control-Allow-Headers");
+    ASSERT_NE(acah, res->headers.end());
+    EXPECT_NE(acah->second.find("Authorization"), std::string::npos);
+    EXPECT_NE(acah->second.find("Mcp-Session-Id"), std::string::npos);
+
+    host.stop();
+}
+
+TEST(HttpOAuth, OptionsPreflightRejectsDisallowedOrigin) {
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host            = "127.0.0.1",
+            .path            = "/mcp",
+            .allowed_origins = {"https://allowed.example"},
+        },
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    cli.set_default_headers({{"Origin", "https://evil.example"}});
+    auto res = cli.Options("/mcp");
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 403);
+
+    host.stop();
+}
+
 TEST(HttpOAuth, NoValidatorMeansNoAuth) {
     // Sanity check: existing code paths (no validator configured)
     // are unaffected — no Authorization header required.

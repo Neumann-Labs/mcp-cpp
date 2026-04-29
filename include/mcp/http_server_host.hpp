@@ -136,6 +136,26 @@ public:
         /// the authorization server. Same control-char restriction
         /// as `auth_realm`.
         std::string resource_metadata_url;
+
+        /// When `bearer_validator` is set and the host binds anything
+        /// other than a loopback address, the SDK refuses to start
+        /// unless this flag is also set. Rationale: bearer tokens
+        /// over plain HTTP travel in cleartext and are trivially
+        /// captured by anything on the network path; the spec
+        /// mandates HTTPS in production. If your deployment puts a
+        /// TLS-terminating proxy in front of the MCP server (the
+        /// common pattern), set this flag to acknowledge that the
+        /// SDK can't see the public protocol.
+        bool allow_insecure_http = false;
+
+        /// Enable an `OPTIONS` preflight handler on the MCP path so
+        /// browser-based clients can send `Authorization` and other
+        /// custom headers cross-origin. The handler echoes the
+        /// negotiated `Access-Control-Allow-Origin` (when the request
+        /// origin passes the allowlist) plus the standard ACAH/ACAM
+        /// envelope. Default on; set to false if you want to bypass
+        /// the SDK's CORS handling and bolt on your own.
+        bool enable_cors_preflight = true;
     };
 
     HttpServerHost(Implementation server_info,

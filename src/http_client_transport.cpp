@@ -342,20 +342,30 @@ void HttpClientTransport::process_send(std::string frame) {
 
     if (res->status == 202) {
         // Empty 202 Accepted — server absorbed a notification or response.
+        // A successful response also re-arms the on_unauthorized
+        // callback so the next 401-batch can fire it again.
+        auth_callback_armed_.store(true, std::memory_order_release);
         return;
     }
     if (res->status == 401 || res->status == 403) {
         // Surface OAuth challenge to the application via the
         // optional callback. The transport itself can't drive the
         // OAuth dance; the application either updates `access_token`
-        // and retries, or destroys this transport and creates a new
-        // one with the new token.
+        // (via set_access_token) and retries, or destroys this
+        // transport and creates a new one with the new token.
+        //
+        // Many in-flight POSTs hitting a 401 batch would otherwise
+        // each call the callback, racing the application's refresh.
+        // Fire ONCE per batch — re-arm on the next 2xx.
         std::string challenge;
         if (auto it = res->headers.find("WWW-Authenticate");
             it != res->headers.end()) {
             challenge = it->second;
         }
-        if (opts_.on_unauthorized) {
+        bool expected = true;
+        if (opts_.on_unauthorized &&
+            auth_callback_armed_.compare_exchange_strong(
+                expected, false, std::memory_order_acq_rel)) {
             try { opts_.on_unauthorized(res->status, challenge); }
             catch (...) {}
         }
@@ -366,6 +376,8 @@ void HttpClientTransport::process_send(std::string frame) {
         deliver_error(std::make_error_code(std::errc::protocol_error));
         return;
     }
+    // Any 2xx re-arms the dedup flag.
+    auth_callback_armed_.store(true, std::memory_order_release);
 
     auto ct_it = res->headers.find("Content-Type");
     const std::string ct = (ct_it != res->headers.end()) ? ct_it->second : "";

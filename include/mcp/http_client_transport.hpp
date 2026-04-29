@@ -188,6 +188,13 @@ private:
     mutable std::mutex            auth_mu_;
     std::string                   access_token_;
 
+    // on_unauthorized firing-flag. Multiple in-flight POSTs that all
+    // hit a 401/403 would otherwise each fire the callback,
+    // racing the application's token-refresh logic. Fire ONCE per
+    // "auth-fail batch" — re-arm on the next successful 2xx. Reads
+    // are atomic-CAS so dedup decisions don't need the auth_mu_.
+    std::atomic<bool>             auth_callback_armed_{true};
+
     MessageCallback               on_message_;
     ErrorCallback                 on_error_;
     CloseCallback                 on_close_;

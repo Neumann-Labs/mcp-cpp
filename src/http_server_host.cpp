@@ -393,6 +393,23 @@ inline bool valid_quoted_param(std::string_view s) noexcept {
     return true;
 }
 
+// Resolve the Access-Control-Allow-Origin value to echo back for a
+// given request. If the host's allowed_origins list contains "*"
+// the response advertises "*"; otherwise it echoes the request's
+// Origin verbatim ONLY when the origin passes the same allowlist
+// check that POST/GET/DELETE go through. Returns empty string if
+// the origin would be rejected — caller skips the ACAO header.
+inline std::string resolve_cors_origin(const httplib::Request&         req,
+                                        const std::vector<std::string>& allow) {
+    const auto it = req.headers.find("Origin");
+    if (it == req.headers.end() || it->second.empty()) return {};
+    for (const auto& a : allow) {
+        if (a == "*") return "*";
+        if (a == it->second) return it->second;
+    }
+    return {};
+}
+
 // Build the WWW-Authenticate Bearer challenge value for 401/403
 // responses per RFC 6750 §3. error_code is "invalid_request" |
 // "invalid_token" | "insufficient_scope" (or empty to omit). scope is
@@ -561,6 +578,25 @@ void HttpServerHost::start() {
         started_.store(false, std::memory_order_release);
         throw std::invalid_argument(
             "HttpServerHost: path must begin with '/'");
+    }
+
+    // Bearer auth over plain HTTP from a non-loopback address ships
+    // tokens in the clear. The spec mandates HTTPS in production;
+    // we let users opt into "I have a TLS terminator in front of
+    // me" via allow_insecure_http rather than guess.
+    const bool is_loopback = (opts_.host == "127.0.0.1" ||
+                              opts_.host == "::1"       ||
+                              opts_.host == "localhost");
+    if (opts_.bearer_validator && !is_loopback &&
+        !opts_.allow_insecure_http) {
+        started_.store(false, std::memory_order_release);
+        throw std::invalid_argument(
+            "HttpServerHost: bearer authentication is configured but "
+            "the host is binding to a non-loopback address (\"" +
+            opts_.host + "\") and the SDK is on plain HTTP. Set "
+            "Options::allow_insecure_http=true to acknowledge that "
+            "TLS termination happens elsewhere (typically a reverse "
+            "proxy), or bind to 127.0.0.1/::1 for development.");
     }
 
     auto* host = this;
@@ -756,6 +792,34 @@ void HttpServerHost::start() {
         }
         res.status = 204;
     });
+
+    // OPTIONS preflight on the MCP path so browser-based clients
+    // can send Authorization, Mcp-Session-Id, MCP-Protocol-Version,
+    // etc. cross-origin. The handler runs the same origin check as
+    // the real verbs; if origin doesn't pass, we 403 — which the
+    // browser surfaces to the JS client as a CORS failure (same as
+    // any other denied preflight).
+    if (opts_.enable_cors_preflight) {
+        srv.Options(opts_.path, [host](const httplib::Request& req,
+                                         httplib::Response&     res) {
+            const auto acao = resolve_cors_origin(
+                req, host->opts_.allowed_origins);
+            if (acao.empty()) {
+                res.status = 403;
+                return;
+            }
+            res.set_header("Access-Control-Allow-Origin",  acao);
+            res.set_header("Access-Control-Allow-Methods",
+                           "GET, POST, DELETE, OPTIONS");
+            res.set_header("Access-Control-Allow-Headers",
+                           "Authorization, Content-Type, Mcp-Session-Id, "
+                           "MCP-Protocol-Version, Last-Event-ID, Accept");
+            res.set_header("Access-Control-Expose-Headers",
+                           "Mcp-Session-Id, WWW-Authenticate");
+            res.set_header("Access-Control-Max-Age", "600");
+            res.status = 204;
+        });
+    }
 
     // RFC 9728 Protected Resource Metadata. We expose the same
     // document at the canonical root well-known URI and at the
