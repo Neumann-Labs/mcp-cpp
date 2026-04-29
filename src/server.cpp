@@ -651,18 +651,33 @@ std::future<ListRootsResult> Server::list_roots() {
 
 std::future<ElicitResult>
 Server::elicit(ElicitRequestParams params) {
+    return elicit(std::move(params), std::chrono::milliseconds{0});
+}
+
+std::future<ElicitResult>
+Server::elicit(ElicitRequestParams       params,
+               std::chrono::milliseconds timeout) {
     auto session = acquire_session();
     if (!session) {
         throw Error{error_code::internal_error,
                     "Server::elicit: server is not running"};
     }
+    // 0 ⇒ Session's default request timeout (30 s). For URL-mode
+    // human-in-the-loop flows callers should pass a larger value.
     auto inner = session->send_request(
         std::string{method_elicitation_create},
-        nlohmann::json(params));
+        nlohmann::json(params),
+        timeout);
     return std::async(std::launch::async,
         [inner = std::move(inner)]() mutable -> ElicitResult {
             return inner.get().get<ElicitResult>();
         });
+}
+
+void Server::set_elicitation_complete_handler(
+    ElicitationCompleteHandler handler) {
+    std::lock_guard<std::mutex> lk(completion_mu_);
+    elicitation_complete_handler_ = std::move(handler);
 }
 
 std::error_code
@@ -1208,6 +1223,38 @@ void Server::run(std::unique_ptr<Transport> transport) {
                     nlohmann::json(TaskStatusNotificationParams{.task = t}));
             });
     }
+
+    // notifications/elicitation/complete (URL-mode finalization). The
+    // handler may be set/cleared at any time; we resolve it lazily
+    // under completion_mu_ on each fire.
+    local->set_notification_handler(
+        std::string{method_notifications_elicitation_complete},
+        [this](const nlohmann::json& params) {
+            ElicitationCompleteHandler h;
+            {
+                std::lock_guard<std::mutex> lk(completion_mu_);
+                h = elicitation_complete_handler_;
+            }
+            if (!h || !params.is_object()) return;
+            ElicitationCompleteNotificationParams parsed;
+            try {
+                parsed = params.get<ElicitationCompleteNotificationParams>();
+            } catch (const std::exception& e) {
+                MCP_LOG_WARN(std::string{"malformed elicitation/complete: "}
+                             + e.what());
+                return;
+            } catch (...) {
+                MCP_LOG_WARN("malformed elicitation/complete");
+                return;
+            }
+            try { h(std::move(parsed.elicitation_id)); }
+            catch (const std::exception& e) {
+                MCP_LOG_ERROR(std::string{"elicitation/complete handler threw: "}
+                              + e.what());
+            } catch (...) {
+                MCP_LOG_ERROR("elicitation/complete handler threw a non-std exception");
+            }
+        });
 
     local->set_notification_handler(std::string{method_notifications_cancelled},
         [this](const nlohmann::json& p) { handle_cancelled(p); });

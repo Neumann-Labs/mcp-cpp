@@ -162,6 +162,24 @@ public:
     std::error_code
     notify_elicitation_complete(std::string elicitation_id);
 
+    /// Hook for inbound `notifications/elicitation/complete` from the
+    /// client. The handler receives the `elicitationId` of the URL
+    /// flow that finished out of band. Pass nullptr to clear.
+    ///
+    /// The spec lets either side emit the completion notification
+    /// (the originator depends on which side actually witnesses the
+    /// out-of-band flow conclude) — the SDK accepts it on either.
+    using ElicitationCompleteHandler =
+        std::function<void(std::string elicitation_id)>;
+    void set_elicitation_complete_handler(ElicitationCompleteHandler handler);
+
+    /// `Server::elicit` with an explicit per-call timeout. Useful when
+    /// the natural human-in-the-loop response window exceeds the
+    /// Session's default 30s request timeout (URL flows in particular).
+    [[nodiscard]] std::future<ElicitResult>
+    elicit(ElicitRequestParams       params,
+           std::chrono::milliseconds timeout);
+
     /// Register an autocompletion handler for prompt args or resource
     /// template URIs. The handler returns a list of candidate values.
     using CompletionHandler =
@@ -256,6 +274,12 @@ private:
 
     CompletionHandler                              completion_handler_;
     std::mutex                                     completion_mu_;
+
+    /// Inbound `notifications/elicitation/complete` from the client.
+    /// Set via set_elicitation_complete_handler(); guards live under
+    /// completion_mu_ to keep the handler-registration mutexing
+    /// surface narrow.
+    ElicitationCompleteHandler                     elicitation_complete_handler_;
 
     /// Tasks: nullable. Allocated by enable_tasks(). When null, the
     /// `tasks` capability is not advertised and `tools/call` requests

@@ -309,4 +309,222 @@ TEST(ElicitationIntegration, UrlModeNotificationDeliversToClient) {
     client.disconnect();
 }
 
+TEST(ElicitationIntegration, UrlModeFullRoundTripWithCompletion) {
+    // Audit fix: the previous URL-mode test only fired a stand-alone
+    // notification; it never issued an actual URL-mode elicitation
+    // through Server::elicit. This test does the real thing:
+    //   server.elicit(URL params) → client returns accept →
+    //   server emits notifications/elicitation/complete →
+    //   client receives the completion.
+    auto p = mcp::test::make_in_memory_pair();
+
+    ServerThread srv(std::move(p.b), [](mcp::Server& s) {
+        s.tool("oauth_kickoff", json{{"type", "object"}},
+               [&s](const json&) -> mcp::CallToolResult {
+                   auto er = s.elicit(mcp::ElicitUrlRequestParams{
+                       .message        = "Authorise via the linked URL",
+                       .url            = "https://idp.example/auth?code=xyz",
+                       .elicitation_id = "eid-url-1",
+                   }).get();
+                   if (er.action != mcp::ElicitAction::accept) {
+                       return mcp::CallToolResult{
+                           .content = { mcp::TextContent{.text = "no"} },
+                           .is_error = true,
+                       };
+                   }
+                   (void)s.notify_elicitation_complete("eid-url-1");
+                   return mcp::CallToolResult{
+                       .content = { mcp::TextContent{.text = "ok"} },
+                   };
+               });
+    });
+
+    std::promise<std::string> completion_p;
+    auto completion_fut = completion_p.get_future();
+
+    bool got_url_mode_request = false;
+    mcp::Client client{ mcp::Implementation{.name = "tester", .version = "0"} };
+    client.connect(std::move(p.a));
+    client.set_elicitation_handler(
+        [&](const mcp::ElicitRequestParams& req) -> mcp::ElicitResult {
+            EXPECT_TRUE(std::holds_alternative<mcp::ElicitUrlRequestParams>(req));
+            if (std::holds_alternative<mcp::ElicitUrlRequestParams>(req)) {
+                const auto& u = std::get<mcp::ElicitUrlRequestParams>(req);
+                EXPECT_EQ(u.elicitation_id, "eid-url-1");
+                EXPECT_NE(u.url.find("idp.example"), std::string::npos);
+                got_url_mode_request = true;
+            }
+            return mcp::ElicitResult{.action = mcp::ElicitAction::accept};
+        });
+    client.set_elicitation_complete_handler(
+        [&](std::string id) {
+            try { completion_p.set_value(std::move(id)); } catch (...) {}
+        });
+    (void)client.initialize().get();
+
+    auto out = client.call_tool("oauth_kickoff").get();
+    ASSERT_FALSE(out.is_error.value_or(false));
+    EXPECT_TRUE(got_url_mode_request);
+
+    ASSERT_EQ(completion_fut.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(completion_fut.get(), "eid-url-1");
+
+    client.disconnect();
+}
+
+TEST(ElicitationIntegration, ServerReceivesElicitationComplete) {
+    // Audit fix: the spec lets EITHER side emit
+    // notifications/elicitation/complete. The server side previously
+    // had no API to receive it. Verify the full round-trip:
+    //   client.notify_elicitation_complete(id) →
+    //   server's set_elicitation_complete_handler fires with id.
+    auto p = mcp::test::make_in_memory_pair();
+
+    std::promise<std::string> server_got;
+    auto server_fut = server_got.get_future();
+
+    ServerThread srv(std::move(p.b), [&](mcp::Server& s) {
+        s.set_elicitation_complete_handler(
+            [&](std::string id) {
+                try { server_got.set_value(std::move(id)); } catch (...) {}
+            });
+    });
+
+    mcp::Client client{ mcp::Implementation{.name = "tester", .version = "0"} };
+    client.connect(std::move(p.a));
+    (void)client.initialize().get();
+
+    const auto ec = client.notify_elicitation_complete("eid-from-client");
+    EXPECT_FALSE(ec) << "send_notification failed: " << ec.message();
+
+    ASSERT_EQ(server_fut.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(server_fut.get(), "eid-from-client");
+
+    client.disconnect();
+}
+
+TEST(ElicitationIntegration, CapabilityActuallyAdvertisedOnInitialize) {
+    // Audit fix: the FormModeRoundTripThroughClient test admitted
+    // it never verified the capability was advertised. This test
+    // captures the inbound InitializeRequestParams server-side
+    // and asserts the elicitation capability was sent.
+    auto p = mcp::test::make_in_memory_pair();
+
+    std::promise<mcp::ClientCapabilities> caps_p;
+    auto caps_fut = caps_p.get_future();
+
+    // We need access to the request params before the server's
+    // built-in initialize handler consumes them. Use a raw Session
+    // on the b-side instead of a Server, so we can install our own
+    // initialize handler that captures + responds.
+    auto b_session = std::make_unique<mcp::Session>(std::move(p.b));
+    b_session->set_request_handler("initialize",
+        [&](const nlohmann::json& params) -> nlohmann::json {
+            auto parsed = params.get<mcp::InitializeRequestParams>();
+            try { caps_p.set_value(parsed.capabilities); } catch (...) {}
+            return mcp::InitializeResult{
+                .protocol_version = std::string{mcp::kLatestProtocolVersion},
+                .capabilities     = mcp::ServerCapabilities{},
+                .server_info      = mcp::Implementation{
+                    .name = "x", .version = "0",
+                },
+            };
+        });
+    b_session->start();
+
+    mcp::Client client{ mcp::Implementation{.name = "tester", .version = "0"} };
+    client.connect(std::move(p.a));
+    client.set_elicitation_handler(
+        [](const mcp::ElicitRequestParams&) -> mcp::ElicitResult {
+            return mcp::ElicitResult{.action = mcp::ElicitAction::accept};
+        });
+
+    (void)client.initialize().get();
+
+    ASSERT_EQ(caps_fut.wait_for(2s), std::future_status::ready);
+    auto caps = caps_fut.get();
+    ASSERT_TRUE(caps.elicitation.has_value());
+    EXPECT_TRUE(caps.elicitation->form.has_value());
+    EXPECT_TRUE(caps.elicitation->url.has_value());
+
+    client.disconnect();
+    b_session->close();
+}
+
+TEST(ElicitationIntegration, NarrowedCapabilityOverrideKeepsOtherDerivedCaps) {
+    // Audit fix: set_client_capabilities() was a *full replacement*,
+    // dropping handler-derived sampling/roots/elicitation. Now it's
+    // a per-field override — engaged fields replace, unset fields
+    // keep their derived values.
+    auto p = mcp::test::make_in_memory_pair();
+
+    std::promise<mcp::ClientCapabilities> caps_p;
+    auto caps_fut = caps_p.get_future();
+
+    auto b_session = std::make_unique<mcp::Session>(std::move(p.b));
+    b_session->set_request_handler("initialize",
+        [&](const nlohmann::json& params) -> nlohmann::json {
+            auto parsed = params.get<mcp::InitializeRequestParams>();
+            try { caps_p.set_value(parsed.capabilities); } catch (...) {}
+            return mcp::InitializeResult{
+                .protocol_version = std::string{mcp::kLatestProtocolVersion},
+                .capabilities     = mcp::ServerCapabilities{},
+                .server_info      = mcp::Implementation{
+                    .name = "x", .version = "0",
+                },
+            };
+        });
+    b_session->start();
+
+    mcp::Client client{ mcp::Implementation{.name = "tester", .version = "0"} };
+    client.connect(std::move(p.a));
+    client.set_sampling_handler(
+        [](const mcp::CreateMessageRequestParams&) -> mcp::CreateMessageResult {
+            return {.role = mcp::Role::assistant, .model = "m"};
+        });
+    client.set_elicitation_handler(
+        [](const mcp::ElicitRequestParams&) -> mcp::ElicitResult {
+            return {.action = mcp::ElicitAction::accept};
+        });
+    // Override: narrow elicitation to form-only. Sampling override
+    // not set — should keep the handler-derived value.
+    mcp::ClientCapabilities override_caps;
+    mcp::ElicitationCapability ec;
+    ec.form = nlohmann::json::object();
+    // ec.url left absent ⇒ form-only.
+    override_caps.elicitation = std::move(ec);
+    client.set_client_capabilities(std::move(override_caps));
+
+    (void)client.initialize().get();
+    ASSERT_EQ(caps_fut.wait_for(2s), std::future_status::ready);
+    auto caps = caps_fut.get();
+    ASSERT_TRUE(caps.elicitation.has_value());
+    EXPECT_TRUE(caps.elicitation->form.has_value());
+    EXPECT_FALSE(caps.elicitation->url.has_value());
+    // The sampling capability survived because we didn't override it.
+    EXPECT_TRUE(caps.sampling.has_value());
+
+    client.disconnect();
+    b_session->close();
+}
+
+TEST(Elicitation, ModeNullRejected) {
+    json j = json{{"mode", nullptr}, {"message", "?"}};
+    EXPECT_THROW((void)j.get<mcp::ElicitRequestParams>(), mcp::Error);
+}
+
+TEST(Elicitation, RequestedSchemaMustBeObject) {
+    json j = json{
+        {"message",         "?"},
+        {"requestedSchema", "not-an-object"},
+    };
+    EXPECT_THROW((void)j.get<mcp::ElicitFormRequestParams>(), mcp::Error);
+
+    json j2 = json{
+        {"message",         "?"},
+        {"requestedSchema", nullptr},
+    };
+    EXPECT_THROW((void)j2.get<mcp::ElicitFormRequestParams>(), mcp::Error);
+}
+
 }  // namespace

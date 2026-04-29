@@ -201,6 +201,12 @@ public:
         std::function<void(std::string elicitation_id)>;
     void set_elicitation_complete_handler(ElicitationCompleteHandler handler);
 
+    /// Send `notifications/elicitation/complete` to the server. The
+    /// spec lets either side emit it; the typical case is the client
+    /// notifying the server once the OAuth redirect_uri (or other
+    /// URL flow) completes.
+    std::error_code notify_elicitation_complete(std::string elicitation_id);
+
     /// `completion/complete` — ask the server for autocompletion
     /// suggestions.
     [[nodiscard]] std::future<CompleteResult>
@@ -208,9 +214,13 @@ public:
              CompleteArgument    argument,
              std::optional<std::unordered_map<std::string, std::string>> context_arguments = std::nullopt);
 
-    /// Override the capabilities advertised on initialize(). The
-    /// default reads "what handlers are registered"; override here to
-    /// add experimental keys, etc.
+    /// Layer extra / narrowed capabilities on top of the ones derived
+    /// from registered handlers. Engaged fields in `caps` REPLACE the
+    /// corresponding derived field; unset fields leave the derived
+    /// value alone. Typical uses: narrow `elicitation` to form-mode
+    /// only (`{form:{}, url:nullopt}`), attach an `experimental`
+    /// blob, or override `tasks` to advertise additional augmentable
+    /// methods.
     void set_client_capabilities(ClientCapabilities caps);
 
     /// Notify the server that the client's roots list changed.

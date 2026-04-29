@@ -1218,6 +1218,14 @@ void to_json(nlohmann::json& j, const ElicitFormRequestParams& p) {
 void from_json(const nlohmann::json& j, ElicitFormRequestParams& p) {
     p.message          = require<std::string>(j, "message");
     p.requested_schema = require<nlohmann::json>(j, "requestedSchema");
+    // Per spec, requestedSchema is a JSON-Schema object describing
+    // the expected response shape. Reject non-object values up
+    // front rather than letting them propagate to a confused
+    // handler.
+    if (!p.requested_schema.is_object()) {
+        throw Error(error_code::invalid_params,
+                    "elicitation/create: `requestedSchema` must be a JSON object");
+    }
 }
 
 void to_json(nlohmann::json& j, const ElicitUrlRequestParams& p) {
@@ -1237,11 +1245,16 @@ void to_json(nlohmann::json& j, const ElicitRequestParams& p) {
     std::visit([&](const auto& alt) { j = alt; }, p);
 }
 void from_json(const nlohmann::json& j, ElicitRequestParams& p) {
-    // Tag-by-`mode`: omitted/`form` ⇒ form mode, `url` ⇒ url mode.
-    // Anything else is an unknown mode; reject so a future spec
-    // extension doesn't silently fall through to form parsing.
+    // Tag-by-`mode`: omitted ⇒ form mode (spec default). A present
+    // `mode` field MUST be a string; null and other types are
+    // rejected so a future spec extension that ships a
+    // non-string-mode shape can't silently fall through to form.
     std::string mode = "form";
-    if (auto it = j.find("mode"); it != j.end() && it->is_string()) {
+    if (auto it = j.find("mode"); it != j.end()) {
+        if (!it->is_string()) {
+            throw Error(error_code::invalid_params,
+                        "elicitation/create: `mode` must be a string");
+        }
         mode = it->get<std::string>();
     }
     if (mode == "form") {

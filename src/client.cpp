@@ -2,6 +2,7 @@
 #include "mcp/client.hpp"
 
 #include "mcp/error.hpp"
+#include "mcp/log.hpp"
 #include "mcp/protocol.hpp"
 #include "mcp/session.hpp"
 #include "mcp/transport.hpp"
@@ -85,20 +86,29 @@ std::future<InitializeResult> Client::initialize() {
     ClientCapabilities caps;
     {
         std::lock_guard<std::mutex> lk(handlers_mu_);
+        // First derive caps from the registered handlers...
+        if (sampling_handler_) caps.sampling = SamplingCapability{};
+        if (roots_handler_)    caps.roots    = RootsCapability{};
+        if (elicitation_handler_) {
+            ElicitationCapability ec;
+            ec.form = nlohmann::json::object();
+            ec.url  = nlohmann::json::object();
+            caps.elicitation = std::move(ec);
+        }
+        // ...then merge any explicit override on top. Each engaged
+        // override field replaces the corresponding derived one
+        // (typical use: narrow elicitation modes, or attach
+        // experimental keys); fields the override leaves unset
+        // keep their handler-derived values rather than getting
+        // wiped out, which is what users expect from "override"
+        // semantics.
         if (capabilities_override_.has_value()) {
-            caps = *capabilities_override_;
-        } else {
-            if (sampling_handler_) caps.sampling = SamplingCapability{};
-            if (roots_handler_)    caps.roots    = RootsCapability{};
-            if (elicitation_handler_) {
-                ElicitationCapability ec;
-                // We accept both modes by default; an application that
-                // only renders form-mode can override via
-                // set_client_capabilities().
-                ec.form = nlohmann::json::object();
-                ec.url  = nlohmann::json::object();
-                caps.elicitation = std::move(ec);
-            }
+            const auto& o = *capabilities_override_;
+            if (o.experimental.has_value()) caps.experimental = o.experimental;
+            if (o.roots.has_value())        caps.roots        = o.roots;
+            if (o.sampling.has_value())     caps.sampling     = o.sampling;
+            if (o.elicitation.has_value())  caps.elicitation  = o.elicitation;
+            if (o.tasks.has_value())        caps.tasks        = o.tasks;
         }
     }
     InitializeRequestParams params{
@@ -558,7 +568,12 @@ void Client::set_elicitation_complete_handler(
                 ElicitationCompleteNotificationParams parsed;
                 try {
                     parsed = params.get<ElicitationCompleteNotificationParams>();
+                } catch (const std::exception& e) {
+                    MCP_LOG_WARN(std::string{"malformed elicitation/complete: "}
+                                 + e.what());
+                    return;
                 } catch (...) {
+                    MCP_LOG_WARN("malformed elicitation/complete");
                     return;
                 }
                 h(std::move(parsed.elicitation_id));
@@ -617,6 +632,17 @@ std::error_code Client::notify_roots_list_changed() {
     }
     return session->send_notification(
         std::string{method_notifications_roots_list_changed});
+}
+
+std::error_code
+Client::notify_elicitation_complete(std::string elicitation_id) {
+    auto session = acquire_session();
+    if (!session) return std::make_error_code(std::errc::not_connected);
+    return session->send_notification(
+        std::string{method_notifications_elicitation_complete},
+        nlohmann::json(ElicitationCompleteNotificationParams{
+            .elicitation_id = std::move(elicitation_id),
+        }));
 }
 
 }  // namespace mcp
