@@ -156,6 +156,7 @@ Client::call_tool(std::string name, nlohmann::json arguments) {
         .name      = std::move(name),
         .arguments = arguments.is_null() ? std::nullopt
                                          : std::optional<nlohmann::json>(std::move(arguments)),
+        .task      = std::nullopt,
     };
     auto inner = session->send_request(std::string{method_tools_call},
                                         nlohmann::json(params));
