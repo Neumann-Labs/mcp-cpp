@@ -3,7 +3,11 @@
 A modern C++20 SDK for the [Model Context Protocol](https://modelcontextprotocol.io)
 (MCP), targeting protocol revision **2025-11-25**.
 
-> **Status:** in active development. The API is not yet stable.
+> **Status:** beta. The wire format is locked to the official MCP spec; the C++
+> API may still see refinements before 1.0.
+
+[![CI](https://github.com/Neumann-Labs/mcp-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/Neumann-Labs/mcp-cpp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ## Why
 
@@ -12,10 +16,11 @@ prompt providers. MCP is that protocol; this SDK aims to be a clean, fast,
 spec-faithful C++ implementation suitable for embedding in editors, IDEs,
 agents, native applications, and high-throughput servers.
 
-Goals:
+**Design goals:**
 
-- **Spec-faithful.** Field names, method names, and behaviors match the official
-  TypeScript schema verbatim.
+- **Spec-faithful.** Field names, method names, and behaviors match the
+  [official TypeScript schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2025-11-25/schema.ts)
+  verbatim.
 - **Idiomatic C++20.** RAII, value semantics, `std::variant` for sum types,
   futures for async results, no inheritance hierarchies where composition will
   do.
@@ -23,6 +28,136 @@ Goals:
   happens behind a few well-named types.
 - **Production-ready.** Sanitizer-clean, thread-safe where it must be, no
   hidden allocations on hot paths.
+
+## What's in 0.1
+
+| Capability | Server | Client | Notes |
+| --- | --- | --- | --- |
+| Initialize / capabilities negotiation | ✅ | ✅ | spec 2025-11-25 |
+| Tools (list, call) | ✅ | ✅ | text/image/audio content blocks |
+| Resources (list, read, templates, subscribe/unsubscribe) | ✅ | ✅ | text + base64 blob contents |
+| Prompts (list, get) | ✅ | ✅ | typed messages with content blocks |
+| Sampling (`sampling/createMessage`) | ✅ initiator | ✅ responder | server-initiated LLM calls |
+| Roots (`roots/list`) | ✅ initiator | ✅ responder | client-side filesystem scopes |
+| Completion (`completion/complete`) | ✅ | ✅ | autocompletion suggestions |
+| Cancellation (`notifications/cancelled`) | ✅ | ✅ | wire-level support |
+| Progress (`notifications/progress`) | ✅ | ✅ | typed token + handler |
+| Logging (`notifications/message`, `logging/setLevel`) | ✅ | ✅ | RFC-5424 levels |
+| Ping (`ping`) | ✅ | ✅ | bi-directional liveness |
+| Pagination | ✅ | ✅ | configurable page size |
+| `stdio` transport | ✅ | ✅ | spec-correct framing |
+| Streamable HTTP transport | 🚧 | 🚧 | post-0.1 |
+| Tasks (2025-11-25 primitive) | 🚧 | 🚧 | post-0.1 |
+| Elicitation, OAuth 2.1 | 🚧 | 🚧 | post-0.1 |
+
+## Quick start
+
+### A minimal server
+
+```cpp
+#include <mcp/mcp.hpp>
+
+int main() {
+    mcp::Server server{
+        mcp::Implementation{.name = "calc", .version = "1.0.0"},
+    };
+
+    server.tool("add",
+        nlohmann::json{
+            {"type", "object"},
+            {"properties", {
+                {"a", {{"type", "number"}}},
+                {"b", {{"type", "number"}}},
+            }},
+            {"required", nlohmann::json::array({"a", "b"})},
+        },
+        [](const nlohmann::json& args) -> mcp::CallToolResult {
+            const double a = args.at("a").get<double>();
+            const double b = args.at("b").get<double>();
+            return {
+                .content = { mcp::TextContent{.text = std::to_string(a + b)} },
+            };
+        });
+
+    server.run(std::make_unique<mcp::StdioTransport>());
+}
+```
+
+Run from a host that supports MCP servers (Claude Desktop, Cursor, the official
+inspector, etc.) by pointing at the resulting binary. Stderr is yours for
+diagnostics; stdout is reserved for the JSON-RPC stream.
+
+### A minimal client
+
+```cpp
+#include <mcp/mcp.hpp>
+
+int main() {
+    auto pair = /* spawn the server, wire its stdio to a transport */;
+
+    mcp::Client client{
+        mcp::Implementation{.name = "my-app", .version = "0.1.0"},
+    };
+    client.connect(std::move(pair.transport));
+
+    auto info = client.initialize().get();
+    std::cout << "connected to " << info.server_info.name << "\n";
+
+    auto tools = client.list_tools().get();
+    for (const auto& t : tools.tools) {
+        std::cout << " - " << t.name << "\n";
+    }
+
+    auto out = client.call_tool("add",
+                                nlohmann::json{{"a", 2}, {"b", 3}}).get();
+    if (auto* text = std::get_if<mcp::TextContent>(&out.content[0])) {
+        std::cout << "result: " << text->text << "\n";
+    }
+}
+```
+
+### Server-initiated LLM calls (sampling)
+
+A common agentic pattern is for a tool to ask the host application to make
+an LLM call on its behalf.
+
+```cpp
+server.tool("ask", schema,
+    [&server](const nlohmann::json& args) -> mcp::CallToolResult {
+        auto resp = server.sample(mcp::CreateMessageRequestParams{
+            .messages = {
+                mcp::SamplingMessage{
+                    .role    = mcp::Role::user,
+                    .content = mcp::TextContent{.text = args["q"]},
+                },
+            },
+            .max_tokens = 512,
+        }).get();
+        return {
+            .content = { mcp::TextContent{
+                .text = std::get<mcp::TextContent>(resp.content).text,
+            }},
+        };
+    });
+```
+
+The client plugs in a sampling handler that does the actual LLM call:
+
+```cpp
+client.set_sampling_handler(
+    [](const mcp::CreateMessageRequestParams& req) -> mcp::CreateMessageResult {
+        // ...invoke your LLM provider with `req.messages` etc...
+        return {
+            .role    = mcp::Role::assistant,
+            .content = mcp::TextContent{.text = "..."},
+            .model   = "claude-3-5-sonnet-20241022",
+        };
+    });
+```
+
+The Session dispatches inbound requests on a worker thread, so calling
+`server.sample(...).get()` from inside a tool handler is safe — it does not
+deadlock.
 
 ## Building
 
@@ -32,7 +167,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-### Useful build options
+### Build options
 
 | Option                    | Default | Effect                                       |
 | ------------------------- | ------- | -------------------------------------------- |
@@ -45,6 +180,70 @@ ctest --test-dir build --output-on-failure
 | `MCP_ENABLE_COVERAGE`     | OFF     | `--coverage` for gcov/llvm-cov.              |
 
 \* defaults to ON when this is the top-level project; OFF when consumed via `add_subdirectory`.
+
+## Consuming the library
+
+### CMake `find_package`
+
+After `cmake --install build`, downstream projects can do:
+
+```cmake
+find_package(mcp REQUIRED)
+target_link_libraries(my_app PRIVATE mcp::mcp)
+```
+
+### `add_subdirectory` / FetchContent
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(mcp
+    GIT_REPOSITORY https://github.com/Neumann-Labs/mcp-cpp.git
+    GIT_TAG        main)
+FetchContent_MakeAvailable(mcp)
+
+target_link_libraries(my_app PRIVATE mcp::mcp)
+```
+
+## Architecture in 60 seconds
+
+```
+                  +-----------------+
+   application -> | Server / Client | <- public façade
+                  +-----------------+
+                          |
+                  +-----------------+
+                  |     Session     | <- JSON-RPC dispatch +
+                  +-----------------+    request/response correlation
+                          |
+                  +-----------------+
+                  |   Transport     | <- byte shovel (StdioTransport,
+                  +-----------------+    Streamable HTTP, in-memory pair)
+                          |
+                          v
+                       wire
+```
+
+- **Transport** is a small abstract interface: it shovels frames; the Session
+  parses them.
+- **Session** owns the request-id generator, the pending-request map, the
+  request/notification dispatch table, and the timeout sweep. It's the same
+  class on both sides of the wire — Server and Client just register different
+  handlers and call different convenience methods.
+- **Server / Client** are thin façades: they translate typed C++ values into
+  JSON-RPC frames and back, expose `tool()` / `resource()` / `prompt()` /
+  `sample()` / `list_tools()` / etc., and own one Session each.
+
+## Threading
+
+- The transport reads on its own thread and invokes the Session's
+  on-message callback.
+- Inbound *requests* are dispatched to a detached worker thread so user
+  handlers can themselves issue further requests on the same Session
+  (e.g. `server.sample(...).get()` from inside a tool handler).
+  `Session::close()` waits for those workers to finish before tearing
+  members down.
+- Inbound *notifications* and *responses* run on the read thread directly.
+- `send_request` / `send_notification` are safe to call from any thread.
 
 ## License
 

@@ -1,1 +1,2 @@
 add_subdirectory(calculator_server)
+add_subdirectory(simple_client)

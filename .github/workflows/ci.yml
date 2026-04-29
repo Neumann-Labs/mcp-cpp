@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.compiler.cc }} / ${{ matrix.config }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+        config: [Debug, RelWithDebInfo]
+        compiler:
+          - { cc: gcc,   cxx: g++ }
+          - { cc: clang, cxx: clang++ }
+        exclude:
+          # macOS uses AppleClang; the gcc image points at clang anyway.
+          - os: macos-14
+            compiler: { cc: gcc, cxx: g++ }
+    env:
+      CC:  ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake \
+            ${{ matrix.compiler.cc }}
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja cmake
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 120
+
+  sanitizers:
+    name: sanitizers / ${{ matrix.sanitizer }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [asan, tsan]
+    env:
+      CC:  clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake clang
+
+      - name: Configure (asan)
+        if: matrix.sanitizer == 'asan'
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMCP_ENABLE_ASAN=ON
+
+      - name: Configure (tsan)
+        if: matrix.sanitizer == 'tsan'
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMCP_ENABLE_TSAN=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 180
+
+  install-and-consume:
+    name: install + downstream consume
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake clang
+
+      - name: Configure & build & install
+        run: |
+          cmake -B build -G Ninja -DCMAKE_INSTALL_PREFIX=$PWD/install \
+            -DMCP_BUILD_TESTS=OFF -DMCP_BUILD_EXAMPLES=OFF
+          cmake --build build
+          cmake --install build
+
+      - name: Build a tiny consumer
+        run: |
+          mkdir -p consumer && cd consumer
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.20)
+          project(consumer LANGUAGES CXX)
+          set(CMAKE_CXX_STANDARD 20)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          find_package(mcp REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE mcp::mcp)
+          EOF
+          cat > main.cpp <<'EOF'
+          #include <mcp/mcp.hpp>
+          int main() {
+              mcp::Server server{ mcp::Implementation{
+                  .name = "downstream", .version = "0",
+              }};
+              (void)server;
+              return 0;
+          }
+          EOF
+          cmake -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/install
+          cmake --build build
+          ./build/consumer
