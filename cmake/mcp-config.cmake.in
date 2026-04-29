@@ -9,5 +9,13 @@ include(CMakeFindDependencyMacro)
 # when we used FetchContent (we set JSON_Install=ON for that).
 find_dependency(nlohmann_json CONFIG REQUIRED)
 
+# cpp-httplib: for static-library installs, even our PRIVATE link is
+# part of the consumer's transitive link list, so the imported target
+# must exist downstream. Only required when this build of mcp was
+# compiled with MCP_ENABLE_HTTP=ON.
+if(@MCP_ENABLE_HTTP@)
+    find_dependency(httplib CONFIG REQUIRED)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/mcp-targets.cmake")
 check_required_components(mcp)
