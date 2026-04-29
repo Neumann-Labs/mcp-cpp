@@ -131,6 +131,13 @@ void Session::close() {
     cancel_all_pending(ErrorObject{
         error_code::internal_error, "session closed", {},
     });
+
+    // Wait for any in-flight request-dispatch workers to finish so
+    // they don't reach into destroyed members after we return.
+    {
+        std::unique_lock<std::mutex> lk(workers_mu_);
+        workers_cv_.wait(lk, [this] { return workers_running_ == 0; });
+    }
 }
 
 // =====================================================================
@@ -239,7 +246,26 @@ void Session::handle_frame(std::string raw) {
     std::visit([&](auto&& m) {
         using T = std::decay_t<decltype(m)>;
         if constexpr (std::is_same_v<T, JsonRpcRequest>) {
-            handle_request(std::move(m));
+            // Dispatch requests to a detached worker so user handlers
+            // can themselves issue further requests on this Session
+            // (e.g. server.sample() inside a tool handler) without
+            // deadlocking the read thread.
+            //
+            // close() waits for `workers_running_` to drain before
+            // returning so the dispatched worker can never outlive
+            // members it touches (transport_, handlers).
+            {
+                std::lock_guard<std::mutex> lk(workers_mu_);
+                ++workers_running_;
+            }
+            std::thread([this, req = std::move(m)]() mutable {
+                handle_request(std::move(req));
+                {
+                    std::lock_guard<std::mutex> lk(workers_mu_);
+                    --workers_running_;
+                }
+                workers_cv_.notify_all();
+            }).detach();
         } else if constexpr (std::is_same_v<T, JsonRpcNotification>) {
             handle_notification(std::move(m));
         } else {

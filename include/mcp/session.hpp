@@ -157,6 +157,13 @@ private:
     std::mutex                                              closed_cb_mu_;
     ClosedCallback                                          on_closed_;
     std::atomic<bool>                                       closed_cb_fired_{false};
+
+    // Tracks live request-dispatch workers so close() can wait for
+    // them to finish before any member they touch (transport_,
+    // handler functions) is destroyed.
+    std::mutex                                              workers_mu_;
+    std::condition_variable                                 workers_cv_;
+    int                                                     workers_running_ = 0;
 };
 
 }  // namespace mcp

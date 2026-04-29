@@ -111,6 +111,39 @@ void Server::report_progress(const ProgressToken&        token,
         nlohmann::json(params));
 }
 
+std::future<CreateMessageResult>
+Server::sample(CreateMessageRequestParams params) {
+    if (!session_) {
+        throw Error{error_code::internal_error,
+                    "Server::sample: server is not running"};
+    }
+    auto inner = session_->send_request(
+        std::string{method_sampling_create_message},
+        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> CreateMessageResult {
+            return inner.get().get<CreateMessageResult>();
+        });
+}
+
+std::future<ListRootsResult> Server::list_roots() {
+    if (!session_) {
+        throw Error{error_code::internal_error,
+                    "Server::list_roots: server is not running"};
+    }
+    auto inner = session_->send_request(std::string{method_roots_list}, nullptr);
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> ListRootsResult {
+            return inner.get().get<ListRootsResult>();
+        });
+}
+
+Server& Server::enable_completion(CompletionHandler handler) {
+    std::lock_guard<std::mutex> lk(completion_mu_);
+    completion_handler_ = std::move(handler);
+    return *this;
+}
+
 // =====================================================================
 // Handlers
 // =====================================================================
@@ -155,6 +188,12 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
     }
     if (logging_enabled_.load(std::memory_order_acquire)) {
         result.capabilities.logging = nlohmann::json::object();
+    }
+    {
+        std::lock_guard<std::mutex> lk(completion_mu_);
+        if (completion_handler_) {
+            result.capabilities.completions = nlohmann::json::object();
+        }
     }
 
     initialized_.store(true, std::memory_order_release);
@@ -324,6 +363,29 @@ nlohmann::json Server::handle_set_level(const nlohmann::json& params) {
     return nlohmann::json::object();
 }
 
+nlohmann::json Server::handle_complete(const nlohmann::json& params) {
+    if (!initialized_.load(std::memory_order_acquire)) {
+        throw Error{error_code::invalid_request, "not initialized"};
+    }
+    CompletionHandler h;
+    {
+        std::lock_guard<std::mutex> lk(completion_mu_);
+        h = completion_handler_;
+    }
+    if (!h) {
+        throw Error{error_code::method_not_found,
+                    "completion is not enabled on this server"};
+    }
+    CompleteRequestParams parsed;
+    try {
+        parsed = params.get<CompleteRequestParams>();
+    } catch (const std::exception& e) {
+        throw Error{error_code::invalid_params,
+                    std::string{"invalid completion/complete params: "} + e.what()};
+    }
+    return CompleteResult{.completion = h(parsed)};
+}
+
 void Server::handle_cancelled(const nlohmann::json& params) {
     // The Server cannot abort an in-flight handler in Phase 2; we log
     // the cancellation so users know it arrived. Phase 3 will plumb a
@@ -372,6 +434,8 @@ void Server::run(std::unique_ptr<Transport> transport) {
         [this](const nlohmann::json& p) { return handle_ping(p); });
     session_->set_request_handler(std::string{method_logging_set_level},
         [this](const nlohmann::json& p) { return handle_set_level(p); });
+    session_->set_request_handler(std::string{method_completion_complete},
+        [this](const nlohmann::json& p) { return handle_complete(p); });
 
     session_->set_notification_handler(std::string{method_notifications_cancelled},
         [this](const nlohmann::json& p) { handle_cancelled(p); });

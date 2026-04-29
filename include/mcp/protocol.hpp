@@ -636,6 +636,149 @@ inline constexpr std::string_view method_notifications_message = "notifications/
 
 inline constexpr std::string_view method_ping = "ping";
 
+// --------------------------------------------------------------------------
+// Sampling (sampling/createMessage) — server-initiated LLM calls
+// --------------------------------------------------------------------------
+
+struct ModelHint {
+    std::optional<std::string> name;
+};
+void to_json(nlohmann::json& j, const ModelHint& h);
+void from_json(const nlohmann::json& j, ModelHint& h);
+
+struct ModelPreferences {
+    std::optional<std::vector<ModelHint>> hints;
+    std::optional<double> cost_priority;
+    std::optional<double> speed_priority;
+    std::optional<double> intelligence_priority;
+};
+void to_json(nlohmann::json& j, const ModelPreferences& p);
+void from_json(const nlohmann::json& j, ModelPreferences& p);
+
+enum class IncludeContext { none, this_server, all_servers };
+[[nodiscard]] std::string_view to_string(IncludeContext c) noexcept;
+void to_json(nlohmann::json& j, const IncludeContext& c);
+void from_json(const nlohmann::json& j, IncludeContext& c);
+
+enum class ToolChoiceMode { auto_, required, none };
+[[nodiscard]] std::string_view to_string(ToolChoiceMode m) noexcept;
+void to_json(nlohmann::json& j, const ToolChoiceMode& m);
+void from_json(const nlohmann::json& j, ToolChoiceMode& m);
+
+struct ToolChoice {
+    std::optional<ToolChoiceMode> mode;
+};
+void to_json(nlohmann::json& j, const ToolChoice& c);
+void from_json(const nlohmann::json& j, ToolChoice& c);
+
+/// A message in a sampling exchange. Phase 3 supports text/image/audio
+/// content; tool_use and tool_result variants land in Phase 4 alongside
+/// the rest of the agentic-loop primitives.
+struct SamplingMessage {
+    Role         role;
+    ContentBlock content;  // single block per spec, also accept array on parse
+};
+void to_json(nlohmann::json& j, const SamplingMessage& m);
+void from_json(const nlohmann::json& j, SamplingMessage& m);
+
+struct CreateMessageRequestParams {
+    std::vector<SamplingMessage>      messages;
+    std::optional<ModelPreferences>   model_preferences;
+    std::optional<std::string>        system_prompt;
+    std::optional<IncludeContext>     include_context;
+    std::optional<double>             temperature;
+    std::int64_t                      max_tokens{};   // required by spec
+    std::optional<std::vector<std::string>> stop_sequences;
+    std::optional<nlohmann::json>     metadata;
+};
+void to_json(nlohmann::json& j, const CreateMessageRequestParams& p);
+void from_json(const nlohmann::json& j, CreateMessageRequestParams& p);
+
+struct CreateMessageResult {
+    Role                         role;
+    ContentBlock                 content;
+    std::string                  model;
+    std::optional<std::string>   stop_reason;
+};
+void to_json(nlohmann::json& j, const CreateMessageResult& r);
+void from_json(const nlohmann::json& j, CreateMessageResult& r);
+
+inline constexpr std::string_view method_sampling_create_message
+    = "sampling/createMessage";
+
+// --------------------------------------------------------------------------
+// Roots (client → server: filesystem/URI scopes)
+// --------------------------------------------------------------------------
+
+struct Root {
+    std::string                uri;
+    std::optional<std::string> name;
+};
+void to_json(nlohmann::json& j, const Root& r);
+void from_json(const nlohmann::json& j, Root& r);
+
+struct ListRootsResult {
+    std::vector<Root> roots;
+};
+void to_json(nlohmann::json& j, const ListRootsResult& r);
+void from_json(const nlohmann::json& j, ListRootsResult& r);
+
+inline constexpr std::string_view method_roots_list = "roots/list";
+inline constexpr std::string_view method_notifications_roots_list_changed
+    = "notifications/roots/list_changed";
+
+// --------------------------------------------------------------------------
+// Completion (autocomplete)
+// --------------------------------------------------------------------------
+
+struct ResourceTemplateReference {
+    std::string uri_template;
+};
+void to_json(nlohmann::json& j, const ResourceTemplateReference& r);
+void from_json(const nlohmann::json& j, ResourceTemplateReference& r);
+
+struct PromptReference {
+    std::string                name;
+    std::optional<std::string> title;
+};
+void to_json(nlohmann::json& j, const PromptReference& r);
+void from_json(const nlohmann::json& j, PromptReference& r);
+
+using CompletionReference = std::variant<ResourceTemplateReference, PromptReference>;
+void to_json(nlohmann::json& j, const CompletionReference& r);
+void from_json(const nlohmann::json& j, CompletionReference& r);
+
+struct CompleteArgument {
+    std::string name;
+    std::string value;
+};
+void to_json(nlohmann::json& j, const CompleteArgument& a);
+void from_json(const nlohmann::json& j, CompleteArgument& a);
+
+struct CompleteRequestParams {
+    CompletionReference                     reference;
+    CompleteArgument                        argument;
+    std::optional<std::unordered_map<std::string, std::string>> context_arguments;
+};
+void to_json(nlohmann::json& j, const CompleteRequestParams& p);
+void from_json(const nlohmann::json& j, CompleteRequestParams& p);
+
+struct CompletionValues {
+    std::vector<std::string>    values;
+    std::optional<std::int64_t> total;
+    std::optional<bool>         has_more;
+};
+void to_json(nlohmann::json& j, const CompletionValues& v);
+void from_json(const nlohmann::json& j, CompletionValues& v);
+
+struct CompleteResult {
+    CompletionValues completion;
+};
+void to_json(nlohmann::json& j, const CompleteResult& r);
+void from_json(const nlohmann::json& j, CompleteResult& r);
+
+inline constexpr std::string_view method_completion_complete = "completion/complete";
+
 }  // namespace mcp
 
 // std::hash specialization so RequestId can key unordered containers.

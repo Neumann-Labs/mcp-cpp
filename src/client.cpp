@@ -63,9 +63,19 @@ std::future<InitializeResult> Client::initialize() {
     if (!session_) {
         throw Error{error_code::internal_error, "client not connected"};
     }
+    ClientCapabilities caps;
+    {
+        std::lock_guard<std::mutex> lk(handlers_mu_);
+        if (capabilities_override_.has_value()) {
+            caps = *capabilities_override_;
+        } else {
+            if (sampling_handler_) caps.sampling = SamplingCapability{};
+            if (roots_handler_)    caps.roots    = RootsCapability{};
+        }
+    }
     InitializeRequestParams params{
         .protocol_version = std::string{kLatestProtocolVersion},
-        .capabilities     = {},
+        .capabilities     = std::move(caps),
         .client_info      = client_info_,
     };
 
@@ -299,6 +309,80 @@ void Client::set_progress_handler(ProgressHandler handler) {
                 h(params.get<ProgressNotificationParams>());
             });
     }
+}
+
+// =====================================================================
+// Sampling, roots, completion
+// =====================================================================
+
+void Client::set_sampling_handler(SamplingHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    {
+        std::lock_guard<std::mutex> lk(handlers_mu_);
+        sampling_handler_ = handler;
+    }
+    if (handler) {
+        session_->set_request_handler(
+            std::string{method_sampling_create_message},
+            [h = std::move(handler)](const nlohmann::json& params) -> nlohmann::json {
+                if (params.is_null()) {
+                    throw Error{error_code::invalid_params,
+                                "sampling/createMessage requires params"};
+                }
+                CreateMessageRequestParams parsed;
+                try {
+                    parsed = params.get<CreateMessageRequestParams>();
+                } catch (const std::exception& e) {
+                    throw Error{error_code::invalid_params,
+                                std::string{"invalid sampling params: "} + e.what()};
+                }
+                return h(parsed);
+            });
+    }
+}
+
+void Client::set_roots_list_handler(RootsListHandler handler) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    {
+        std::lock_guard<std::mutex> lk(handlers_mu_);
+        roots_handler_ = handler;
+    }
+    if (handler) {
+        session_->set_request_handler(
+            std::string{method_roots_list},
+            [h = std::move(handler)](const nlohmann::json&) -> nlohmann::json {
+                return h();
+            });
+    }
+}
+
+std::future<CompleteResult>
+Client::complete(CompletionReference reference,
+                 CompleteArgument    argument,
+                 std::optional<std::unordered_map<std::string, std::string>> context_arguments) {
+    if (!session_) throw Error{error_code::internal_error, "client not connected"};
+    CompleteRequestParams params{
+        .reference         = std::move(reference),
+        .argument          = std::move(argument),
+        .context_arguments = std::move(context_arguments),
+    };
+    auto inner = session_->send_request(std::string{method_completion_complete},
+                                        nlohmann::json(params));
+    return std::async(std::launch::async,
+        [inner = std::move(inner)]() mutable -> CompleteResult {
+            return inner.get().get<CompleteResult>();
+        });
+}
+
+void Client::set_client_capabilities(ClientCapabilities caps) {
+    std::lock_guard<std::mutex> lk(handlers_mu_);
+    capabilities_override_ = std::move(caps);
+}
+
+void Client::notify_roots_list_changed() {
+    if (!session_) return;
+    (void)session_->send_notification(
+        std::string{method_notifications_roots_list_changed});
 }
 
 }  // namespace mcp

@@ -908,4 +908,239 @@ void from_json(const nlohmann::json& j, LoggingMessageNotificationParams& p) {
     take_optional(j, "logger", p.logger);
 }
 
+// =====================================================================
+// Sampling
+// =====================================================================
+
+void to_json(nlohmann::json& j, const ModelHint& h) {
+    j = nlohmann::json::object();
+    put_optional(j, "name", h.name);
+}
+void from_json(const nlohmann::json& j, ModelHint& h) {
+    take_optional(j, "name", h.name);
+}
+
+void to_json(nlohmann::json& j, const ModelPreferences& p) {
+    j = nlohmann::json::object();
+    if (p.hints.has_value()) j["hints"] = *p.hints;
+    put_optional(j, "costPriority",         p.cost_priority);
+    put_optional(j, "speedPriority",        p.speed_priority);
+    put_optional(j, "intelligencePriority", p.intelligence_priority);
+}
+void from_json(const nlohmann::json& j, ModelPreferences& p) {
+    if (auto it = j.find("hints"); it != j.end() && it->is_array()) {
+        p.hints = it->get<std::vector<ModelHint>>();
+    }
+    take_optional(j, "costPriority",         p.cost_priority);
+    take_optional(j, "speedPriority",        p.speed_priority);
+    take_optional(j, "intelligencePriority", p.intelligence_priority);
+}
+
+std::string_view to_string(IncludeContext c) noexcept {
+    switch (c) {
+        case IncludeContext::none:        return "none";
+        case IncludeContext::this_server: return "thisServer";
+        case IncludeContext::all_servers: return "allServers";
+    }
+    return "?";
+}
+void to_json(nlohmann::json& j, const IncludeContext& c) { j = std::string{to_string(c)}; }
+void from_json(const nlohmann::json& j, IncludeContext& c) {
+    const auto s = j.get<std::string>();
+    if (s == "none")        c = IncludeContext::none;
+    else if (s == "thisServer") c = IncludeContext::this_server;
+    else if (s == "allServers") c = IncludeContext::all_servers;
+    else throw Error(error_code::parse_error,
+                     "unknown includeContext: " + s);
+}
+
+std::string_view to_string(ToolChoiceMode m) noexcept {
+    switch (m) {
+        case ToolChoiceMode::auto_:    return "auto";
+        case ToolChoiceMode::required: return "required";
+        case ToolChoiceMode::none:     return "none";
+    }
+    return "?";
+}
+void to_json(nlohmann::json& j, const ToolChoiceMode& m) { j = std::string{to_string(m)}; }
+void from_json(const nlohmann::json& j, ToolChoiceMode& m) {
+    const auto s = j.get<std::string>();
+    if (s == "auto")     m = ToolChoiceMode::auto_;
+    else if (s == "required") m = ToolChoiceMode::required;
+    else if (s == "none")     m = ToolChoiceMode::none;
+    else throw Error(error_code::parse_error, "unknown toolChoice mode: " + s);
+}
+
+void to_json(nlohmann::json& j, const ToolChoice& c) {
+    j = nlohmann::json::object();
+    put_optional(j, "mode", c.mode);
+}
+void from_json(const nlohmann::json& j, ToolChoice& c) {
+    take_optional(j, "mode", c.mode);
+}
+
+void to_json(nlohmann::json& j, const SamplingMessage& m) {
+    j = nlohmann::json::object();
+    j["role"]    = m.role;
+    j["content"] = m.content;
+}
+void from_json(const nlohmann::json& j, SamplingMessage& m) {
+    m.role = j.at("role").get<Role>();
+    const auto& c = j.at("content");
+    // Accept both single block and array (single-element array).
+    if (c.is_array()) {
+        if (c.empty()) {
+            throw Error(error_code::parse_error,
+                        "SamplingMessage.content array must not be empty");
+        }
+        m.content = c[0].get<ContentBlock>();
+    } else {
+        m.content = c.get<ContentBlock>();
+    }
+}
+
+void to_json(nlohmann::json& j, const CreateMessageRequestParams& p) {
+    j = nlohmann::json::object();
+    j["messages"]  = p.messages;
+    j["maxTokens"] = p.max_tokens;
+    put_optional(j, "modelPreferences", p.model_preferences);
+    put_optional(j, "systemPrompt",     p.system_prompt);
+    put_optional(j, "includeContext",   p.include_context);
+    put_optional(j, "temperature",      p.temperature);
+    if (p.stop_sequences.has_value()) j["stopSequences"] = *p.stop_sequences;
+    put_optional(j, "metadata",         p.metadata);
+}
+void from_json(const nlohmann::json& j, CreateMessageRequestParams& p) {
+    p.messages   = j.at("messages").get<std::vector<SamplingMessage>>();
+    p.max_tokens = require<std::int64_t>(j, "maxTokens");
+    take_optional(j, "modelPreferences", p.model_preferences);
+    take_optional(j, "systemPrompt",     p.system_prompt);
+    take_optional(j, "includeContext",   p.include_context);
+    take_optional(j, "temperature",      p.temperature);
+    if (auto it = j.find("stopSequences"); it != j.end() && it->is_array()) {
+        p.stop_sequences = it->get<std::vector<std::string>>();
+    }
+    take_optional_json(j, "metadata", p.metadata);
+}
+
+void to_json(nlohmann::json& j, const CreateMessageResult& r) {
+    j = nlohmann::json::object();
+    j["role"]    = r.role;
+    j["content"] = r.content;
+    j["model"]   = r.model;
+    put_optional(j, "stopReason", r.stop_reason);
+}
+void from_json(const nlohmann::json& j, CreateMessageResult& r) {
+    r.role    = j.at("role").get<Role>();
+    r.content = j.at("content").get<ContentBlock>();
+    r.model   = require<std::string>(j, "model");
+    take_optional(j, "stopReason", r.stop_reason);
+}
+
+// =====================================================================
+// Roots
+// =====================================================================
+
+void to_json(nlohmann::json& j, const Root& r) {
+    j = nlohmann::json{{"uri", r.uri}};
+    put_optional(j, "name", r.name);
+}
+void from_json(const nlohmann::json& j, Root& r) {
+    r.uri = require<std::string>(j, "uri");
+    take_optional(j, "name", r.name);
+}
+
+void to_json(nlohmann::json& j, const ListRootsResult& r) {
+    j = nlohmann::json::object();
+    j["roots"] = r.roots;
+}
+void from_json(const nlohmann::json& j, ListRootsResult& r) {
+    r.roots = j.at("roots").get<std::vector<Root>>();
+}
+
+// =====================================================================
+// Completion
+// =====================================================================
+
+void to_json(nlohmann::json& j, const ResourceTemplateReference& r) {
+    j = nlohmann::json{{"type", "ref/resource"}, {"uri", r.uri_template}};
+}
+void from_json(const nlohmann::json& j, ResourceTemplateReference& r) {
+    r.uri_template = require<std::string>(j, "uri");
+}
+
+void to_json(nlohmann::json& j, const PromptReference& r) {
+    j = nlohmann::json::object();
+    j["type"] = "ref/prompt";
+    j["name"] = r.name;
+    put_optional(j, "title", r.title);
+}
+void from_json(const nlohmann::json& j, PromptReference& r) {
+    r.name = require<std::string>(j, "name");
+    take_optional(j, "title", r.title);
+}
+
+void to_json(nlohmann::json& j, const CompletionReference& r) {
+    std::visit([&j](const auto& v) { j = v; }, r);
+}
+void from_json(const nlohmann::json& j, CompletionReference& r) {
+    const auto t = require<std::string>(j, "type");
+    if (t == "ref/resource") { r = j.get<ResourceTemplateReference>(); return; }
+    if (t == "ref/prompt")   { r = j.get<PromptReference>();           return; }
+    throw Error(error_code::parse_error,
+                std::string{"unknown completion reference type: "} + t);
+}
+
+void to_json(nlohmann::json& j, const CompleteArgument& a) {
+    j = nlohmann::json{{"name", a.name}, {"value", a.value}};
+}
+void from_json(const nlohmann::json& j, CompleteArgument& a) {
+    a.name  = require<std::string>(j, "name");
+    a.value = require<std::string>(j, "value");
+}
+
+void to_json(nlohmann::json& j, const CompleteRequestParams& p) {
+    j = nlohmann::json::object();
+    j["ref"]      = p.reference;
+    j["argument"] = p.argument;
+    if (p.context_arguments.has_value()) {
+        nlohmann::json ctx = nlohmann::json::object();
+        for (const auto& [k, v] : *p.context_arguments) ctx[k] = v;
+        j["context"] = nlohmann::json{{"arguments", ctx}};
+    }
+}
+void from_json(const nlohmann::json& j, CompleteRequestParams& p) {
+    p.reference = j.at("ref").get<CompletionReference>();
+    p.argument  = j.at("argument").get<CompleteArgument>();
+    if (auto it = j.find("context"); it != j.end() && it->is_object()) {
+        if (auto a = it->find("arguments"); a != it->end() && a->is_object()) {
+            std::unordered_map<std::string, std::string> ctx;
+            for (auto i = a->begin(); i != a->end(); ++i) {
+                if (i.value().is_string()) ctx.emplace(i.key(), i.value().get<std::string>());
+            }
+            p.context_arguments = std::move(ctx);
+        }
+    }
+}
+
+void to_json(nlohmann::json& j, const CompletionValues& v) {
+    j = nlohmann::json::object();
+    j["values"] = v.values;
+    put_optional(j, "total",   v.total);
+    put_optional(j, "hasMore", v.has_more);
+}
+void from_json(const nlohmann::json& j, CompletionValues& v) {
+    v.values = j.at("values").get<std::vector<std::string>>();
+    take_optional(j, "total",   v.total);
+    take_optional(j, "hasMore", v.has_more);
+}
+
+void to_json(nlohmann::json& j, const CompleteResult& r) {
+    j = nlohmann::json::object();
+    j["completion"] = r.completion;
+}
+void from_json(const nlohmann::json& j, CompleteResult& r) {
+    r.completion = j.at("completion").get<CompletionValues>();
+}
+
 }  // namespace mcp

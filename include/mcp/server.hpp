@@ -124,6 +124,24 @@ public:
                          std::optional<double>       total   = std::nullopt,
                          std::optional<std::string>  message = std::nullopt);
 
+    /// Send `sampling/createMessage` to the client and return a future
+    /// for the result. The caller (typically a tool handler) MUST run on
+    /// the Session's worker thread, not the read thread, or it would
+    /// deadlock. Session::handle_frame ensures this by dispatching
+    /// inbound requests to a detached worker.
+    [[nodiscard]] std::future<CreateMessageResult>
+    sample(CreateMessageRequestParams params);
+
+    /// Send `roots/list` to the client and return a future for the
+    /// result. The client must declare the roots capability.
+    [[nodiscard]] std::future<ListRootsResult> list_roots();
+
+    /// Register an autocompletion handler for prompt args or resource
+    /// template URIs. The handler returns a list of candidate values.
+    using CompletionHandler =
+        std::function<CompletionValues(const CompleteRequestParams&)>;
+    Server& enable_completion(CompletionHandler handler);
+
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
     /// called or the transport closes.
@@ -152,6 +170,7 @@ private:
     nlohmann::json handle_ping(const nlohmann::json& params);
     nlohmann::json handle_set_level(const nlohmann::json& params);
     void           handle_cancelled(const nlohmann::json& params);
+    nlohmann::json handle_complete(const nlohmann::json& params);
 
     struct ToolEntry {
         Tool        descriptor;
@@ -181,6 +200,9 @@ private:
 
     std::atomic<bool>                              logging_enabled_{false};
     std::atomic<LoggingLevel>                      log_level_{LoggingLevel::info};
+
+    CompletionHandler                              completion_handler_;
+    std::mutex                                     completion_mu_;
 
     std::unique_ptr<Session>                    session_;
     std::atomic<bool>                           initialized_{false};

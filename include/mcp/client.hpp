@@ -135,6 +135,33 @@ public:
         std::function<void(const ProgressNotificationParams&)>;
     void set_progress_handler(ProgressHandler handler);
 
+    /// Handler for `sampling/createMessage` requests from the server.
+    /// Setting this also advertises the `sampling` capability when the
+    /// next initialize() runs (see set_capabilities()).
+    using SamplingHandler =
+        std::function<CreateMessageResult(const CreateMessageRequestParams&)>;
+    void set_sampling_handler(SamplingHandler handler);
+
+    /// Handler for `roots/list` requests from the server. Setting this
+    /// also advertises the `roots` capability.
+    using RootsListHandler = std::function<ListRootsResult()>;
+    void set_roots_list_handler(RootsListHandler handler);
+
+    /// `completion/complete` — ask the server for autocompletion
+    /// suggestions.
+    [[nodiscard]] std::future<CompleteResult>
+    complete(CompletionReference reference,
+             CompleteArgument    argument,
+             std::optional<std::unordered_map<std::string, std::string>> context_arguments = std::nullopt);
+
+    /// Override the capabilities advertised on initialize(). The
+    /// default reads "what handlers are registered"; override here to
+    /// add experimental keys, etc.
+    void set_client_capabilities(ClientCapabilities caps);
+
+    /// Notify the server that the client's roots list changed.
+    void notify_roots_list_changed();
+
     /// True between connect() and disconnect().
     [[nodiscard]] bool is_connected() const noexcept;
 
@@ -147,6 +174,11 @@ private:
     std::optional<InitializeResult>             server_;
     mutable std::mutex                          server_mu_;
     std::atomic<bool>                           connected_{false};
+
+    SamplingHandler                             sampling_handler_;
+    RootsListHandler                            roots_handler_;
+    std::optional<ClientCapabilities>           capabilities_override_;
+    std::mutex                                  handlers_mu_;
 };
 
 }  // namespace mcp
