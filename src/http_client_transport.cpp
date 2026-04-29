@@ -126,6 +126,12 @@ HttpClientTransport::HttpClientTransport(Options opts) : opts_(std::move(opts)) 
     if (opts_.session_id.has_value()) {
         session_id_ = *opts_.session_id;
     }
+    // Seed the mutable access_token_ from Options. The Options copy
+    // is no longer the source of truth; set_access_token rotates this
+    // member so on_unauthorized callbacks can drive a token refresh.
+    if (opts_.access_token.has_value()) {
+        access_token_ = *opts_.access_token;
+    }
     impl_ = std::make_unique<ClientImpl>(scheme_host_port_);
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
         opts_.connect_timeout).count();
@@ -291,8 +297,11 @@ void HttpClientTransport::process_send(std::string frame) {
         std::lock_guard<std::mutex> lk(session_id_mu_);
         if (session_id_.has_value()) headers.emplace("Mcp-Session-Id", *session_id_);
     }
-    if (opts_.access_token.has_value() && !opts_.access_token->empty()) {
-        headers.emplace("Authorization", "Bearer " + *opts_.access_token);
+    {
+        std::lock_guard<std::mutex> lk(auth_mu_);
+        if (!access_token_.empty()) {
+            headers.emplace("Authorization", "Bearer " + access_token_);
+        }
     }
     for (const auto& [k, v] : opts_.extra_headers) headers.emplace(k, v);
 
@@ -404,8 +413,11 @@ void HttpClientTransport::run_get_stream() noexcept {
         headers.emplace("Accept", "text/event-stream");
         headers.emplace("MCP-Protocol-Version", opts_.protocol_version);
         headers.emplace("Mcp-Session-Id", *sid);
-        if (opts_.access_token.has_value() && !opts_.access_token->empty()) {
-            headers.emplace("Authorization", "Bearer " + *opts_.access_token);
+        {
+            std::lock_guard<std::mutex> lk(auth_mu_);
+            if (!access_token_.empty()) {
+                headers.emplace("Authorization", "Bearer " + access_token_);
+            }
         }
         for (const auto& [k, v] : opts_.extra_headers) headers.emplace(k, v);
 
@@ -427,11 +439,45 @@ void HttpClientTransport::run_get_stream() noexcept {
         // server-initiated stream"; retry isn't useful, exit cleanly.
         if (res && res->status == 405) return;
 
+        // 401/403: the access token has expired or been revoked.
+        // Without this branch, run_get_stream would busy-retry every
+        // 200 ms forever, blasting the IdP with no way for the
+        // application to refresh the token. Surface the challenge
+        // and exit; the application is expected to call
+        // set_access_token() and start a new transport (or restart
+        // this one) to recover.
+        if (res && (res->status == 401 || res->status == 403)) {
+            if (opts_.on_unauthorized) {
+                std::string challenge;
+                if (auto it = res->headers.find("WWW-Authenticate");
+                    it != res->headers.end()) {
+                    challenge = it->second;
+                }
+                try { opts_.on_unauthorized(res->status, challenge); }
+                catch (...) {}
+            }
+            return;
+        }
+
         if (closed_.load(std::memory_order_acquire)) return;
 
         // Brief backoff before reconnecting after EOF/error.
         std::this_thread::sleep_for(std::chrono::milliseconds{200});
     }
+}
+
+// =====================================================================
+// Mutable access-token API
+// =====================================================================
+
+void HttpClientTransport::set_access_token(std::string token) {
+    std::lock_guard<std::mutex> lk(auth_mu_);
+    access_token_ = std::move(token);
+}
+
+std::string HttpClientTransport::access_token() const {
+    std::lock_guard<std::mutex> lk(auth_mu_);
+    return access_token_;
 }
 
 }  // namespace mcp

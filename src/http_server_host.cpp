@@ -378,13 +378,44 @@ bool origin_allowed(const httplib::Request& req,
     return false;
 }
 
-// Build the WWW-Authenticate Bearer challenge value for 401 responses.
-// Spec: realm + (optional) resource_metadata="...".
-inline std::string build_bearer_challenge(const std::string& realm,
-                                           const std::string& metadata_url) {
+// Reject control chars + the two characters that need escaping in an
+// RFC 7235 quoted-string. Using "reject" rather than "escape" because
+// the only legitimate values for realm and metadata_url shouldn't
+// contain any of these — and a malformed input is far more likely
+// to be an attack than a legitimate exotic value.
+inline bool valid_quoted_param(std::string_view s) noexcept {
+    for (char ch : s) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c == '"' || c == '\\' || c == '\r' || c == '\n' || c < 0x20) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Build the WWW-Authenticate Bearer challenge value for 401/403
+// responses per RFC 6750 §3. error_code is "invalid_request" |
+// "invalid_token" | "insufficient_scope" (or empty to omit). scope is
+// the space-separated scope hint for insufficient_scope.
+inline std::string build_bearer_challenge(const std::string&     realm,
+                                           const std::string&     metadata_url,
+                                           std::string_view       error_code,
+                                           std::string_view       scope) {
+    // valid_quoted_param() at start() guarantees realm + metadata_url
+    // never contain unsafe characters; we just splice them.
     std::string out = "Bearer realm=\"";
     out += realm;
     out += "\"";
+    if (!error_code.empty()) {
+        out += ", error=\"";
+        out += error_code;
+        out += "\"";
+    }
+    if (!scope.empty()) {
+        out += ", scope=\"";
+        out += scope;
+        out += "\"";
+    }
     if (!metadata_url.empty()) {
         out += ", resource_metadata=\"";
         out += metadata_url;
@@ -393,46 +424,108 @@ inline std::string build_bearer_challenge(const std::string& realm,
     return out;
 }
 
+// Case-insensitive ASCII prefix match. cpp-httplib's trim semantics
+// don't normalize the scheme, so we have to. RFC 7235 §2.1 says
+// scheme tokens are case-insensitive.
+inline bool starts_with_bearer_ci(std::string_view s) noexcept {
+    constexpr std::string_view prefix = "Bearer ";
+    if (s.size() < prefix.size()) return false;
+    for (std::size_t i = 0; i < prefix.size() - 1; ++i) {
+        char a = s[i], b = prefix[i];
+        if (a >= 'A' && a <= 'Z') a = static_cast<char>(a + 32);
+        if (b >= 'A' && b <= 'Z') b = static_cast<char>(b + 32);
+        if (a != b) return false;
+    }
+    // The separator after the scheme can be any OWS (space or tab).
+    const char sep = s[prefix.size() - 1];
+    return sep == ' ' || sep == '\t';
+}
+
+// Trim leading/trailing OWS from a token68 candidate.
+inline std::string_view trim_ows(std::string_view s) noexcept {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+    while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.remove_suffix(1);
+    return s;
+}
+
 // Validate the Authorization header against the host's bearer
 // validator (if configured). Returns true when the request is allowed
-// to proceed; if false, fills `res` with a 401 response and the
-// caller should bail.
+// to proceed; if false, fills `res` with a 401/403 response.
 inline bool authorize(const httplib::Request&         req,
                       httplib::Response&              res,
                       const HttpServerHost::Options&  opts) {
     if (!opts.bearer_validator) return true;
-    const auto it = req.headers.find("Authorization");
-    if (it == req.headers.end()) {
+
+    const auto count_auth = req.headers.count("Authorization");
+    if (count_auth == 0) {
         res.status = 401;
         res.set_header("WWW-Authenticate",
             build_bearer_challenge(opts.auth_realm,
-                                   opts.resource_metadata_url));
+                                   opts.resource_metadata_url,
+                                   "invalid_request", {}));
         res.set_content("missing Authorization header", "text/plain");
         return false;
     }
-    constexpr std::string_view prefix = "Bearer ";
-    if (it->second.size() <= prefix.size() ||
-        it->second.compare(0, prefix.size(), prefix) != 0) {
+    // RFC 7230: a request with multiple Authorization headers is
+    // syntactically invalid — refuse rather than pick one arbitrarily.
+    if (count_auth > 1) {
+        res.status = 400;
+        res.set_content("multiple Authorization headers", "text/plain");
+        return false;
+    }
+
+    const auto it = req.headers.find("Authorization");
+    const std::string& hdr = it->second;
+    if (!starts_with_bearer_ci(hdr)) {
         res.status = 401;
         res.set_header("WWW-Authenticate",
             build_bearer_challenge(opts.auth_realm,
-                                   opts.resource_metadata_url));
+                                   opts.resource_metadata_url,
+                                   "invalid_request", {}));
         res.set_content("expected Bearer scheme", "text/plain");
         return false;
     }
-    const std::string_view token{
-        it->second.data() + prefix.size(),
-        it->second.size() - prefix.size(),
-    };
-    if (!opts.bearer_validator(token)) {
+    constexpr std::size_t prefix_len = 7;  // "Bearer "
+    auto token = trim_ows(std::string_view{hdr}.substr(prefix_len));
+    if (token.empty()) {
         res.status = 401;
         res.set_header("WWW-Authenticate",
             build_bearer_challenge(opts.auth_realm,
-                                   opts.resource_metadata_url));
-        res.set_content("invalid bearer token", "text/plain");
+                                   opts.resource_metadata_url,
+                                   "invalid_request", {}));
+        res.set_content("empty bearer token", "text/plain");
         return false;
     }
-    return true;
+
+    const auto outcome = opts.bearer_validator(token);
+    switch (outcome.status) {
+        case HttpServerHost::Options::BearerStatus::allow:
+            return true;
+        case HttpServerHost::Options::BearerStatus::invalid_token:
+            res.status = 401;
+            res.set_header("WWW-Authenticate",
+                build_bearer_challenge(opts.auth_realm,
+                                       opts.resource_metadata_url,
+                                       "invalid_token", {}));
+            res.set_content("invalid bearer token", "text/plain");
+            return false;
+        case HttpServerHost::Options::BearerStatus::insufficient_scope:
+            // Scope strings have the same control-char concern as the
+            // realm. valid_quoted_param() is checked at start() but
+            // validator output is fresh per request — drop unsafe
+            // strings here rather than splicing them blindly.
+            res.status = 403;
+            res.set_header("WWW-Authenticate",
+                build_bearer_challenge(opts.auth_realm,
+                                       opts.resource_metadata_url,
+                                       "insufficient_scope",
+                                       valid_quoted_param(outcome.required_scopes)
+                                           ? std::string_view{outcome.required_scopes}
+                                           : std::string_view{}));
+            res.set_content("insufficient scope", "text/plain");
+            return false;
+    }
+    return false;  // unreachable
 }
 
 }  // namespace
@@ -443,6 +536,33 @@ inline bool authorize(const httplib::Request&         req,
 
 void HttpServerHost::start() {
     if (started_.exchange(true, std::memory_order_acq_rel)) return;
+
+    // Inputs that get spliced into HTTP response headers have to be
+    // sanitised — a CR/LF or `"` would smuggle a header. We don't try
+    // to escape; we reject. Legitimate realm names and URLs don't
+    // contain these.
+    if (!valid_quoted_param(opts_.auth_realm)) {
+        started_.store(false, std::memory_order_release);
+        throw std::invalid_argument(
+            "HttpServerHost: auth_realm contains a control or quoting "
+            "character — refusing to splice into the WWW-Authenticate "
+            "header");
+    }
+    if (!valid_quoted_param(opts_.resource_metadata_url)) {
+        started_.store(false, std::memory_order_release);
+        throw std::invalid_argument(
+            "HttpServerHost: resource_metadata_url contains a control "
+            "or quoting character — refusing to splice into the "
+            "WWW-Authenticate header");
+    }
+    // path is what we register routes under; allowing weird values
+    // would conflict with the well-known endpoints below.
+    if (opts_.path.empty() || opts_.path.front() != '/') {
+        started_.store(false, std::memory_order_release);
+        throw std::invalid_argument(
+            "HttpServerHost: path must begin with '/'");
+    }
+
     auto* host = this;
 
     // Capture small things so the lambdas don't copy the host.
@@ -638,18 +758,24 @@ void HttpServerHost::start() {
     });
 
     // RFC 9728 Protected Resource Metadata. We expose the same
-    // document at the canonical root well-known URI and the
-    // path-prefixed variant (the spec lets either form be used by
-    // resources living at non-root paths). Note: NOT gated by
-    // origin / Bearer — discovery is meant to be public.
+    // document at the canonical root well-known URI and at the
+    // path-prefixed variant when path is non-trivial. NOT gated by
+    // origin / Bearer — discovery is meant to be public, including
+    // cross-origin (browser MCP clients run discovery from a foreign
+    // origin), so we set the permissive CORS header per RFC 9728 §3.1.
     if (opts_.resource_metadata.has_value()) {
         const std::string body = opts_.resource_metadata->dump();
         const auto handler = [body](const httplib::Request&,
                                      httplib::Response& res) {
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_header("Cache-Control", "public, max-age=3600");
             res.set_content(body, "application/json");
         };
         srv.Get("/.well-known/oauth-protected-resource", handler);
-        if (!opts_.path.empty() && opts_.path != "/") {
+        // Only register the path-prefixed variant when path is more
+        // than a bare "/"; otherwise the route would collide with
+        // the canonical one above.
+        if (opts_.path.size() > 1) {
             srv.Get("/.well-known/oauth-protected-resource" + opts_.path,
                     handler);
         }

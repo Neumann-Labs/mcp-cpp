@@ -87,38 +87,54 @@ public:
 
         // -------- 2025-11-25 OAuth 2.1 authorization (optional) --------
         //
-        // Bearer-token validation: when set, every POST/GET on the MCP
-        // path must include `Authorization: Bearer <token>` for which
-        // the validator returns true. A missing or invalid token
-        // produces a 401 with an RFC 6750 `WWW-Authenticate: Bearer
-        // realm="..."` challenge — and, if `resource_metadata_url` is
-        // set, with `resource_metadata="..."` so the client can run
-        // OAuth 2.0 Protected Resource Metadata discovery.
+        // Bearer-token validation: when set, every POST/GET/DELETE on
+        // the MCP path must include `Authorization: Bearer <token>`
+        // for which the validator returns `BearerStatus::allow`.
+        // Missing / wrong scheme / `invalid_token` ⇒ 401 with an
+        // RFC 6750 `WWW-Authenticate: Bearer realm="...",
+        // error="invalid_token"[, resource_metadata="..."]` challenge.
+        // `insufficient_scope` ⇒ 403 with the required scopes echoed
+        // back in the challenge so the client can step-up.
         //
         // Note: this hook validates a single token in isolation; it's
         // typically backed by the application's introspection or JWT
         // verification. The SDK does not itself talk to authorization
         // servers — that's the application's job.
+        enum class BearerStatus {
+            allow,
+            invalid_token,
+            insufficient_scope,
+        };
+        struct BearerOutcome {
+            BearerStatus status = BearerStatus::invalid_token;
+            /// For `insufficient_scope` only: space-separated scope
+            /// string echoed as `scope="..."` in the 403 challenge.
+            std::string  required_scopes;
+        };
         using BearerValidator =
-            std::function<bool(std::string_view token)>;
+            std::function<BearerOutcome(std::string_view token)>;
         BearerValidator bearer_validator;
 
         /// Realm name used in the WWW-Authenticate challenge. Optional;
-        /// defaults to "mcp".
+        /// defaults to "mcp". MUST NOT contain `"`, `\`, or any control
+        /// character (CR/LF specifically) — those would smuggle into
+        /// the response header. The SDK rejects bad realm strings at
+        /// `start()`.
         std::string auth_realm = "mcp";
 
         /// Optional Protected Resource Metadata document (RFC 9728).
-        /// When set, the host serves it as
-        /// `application/json` at `/.well-known/oauth-protected-resource`
-        /// (and at `/.well-known/oauth-protected-resource<path>` if
-        /// `path != "/"`).
+        /// When set, the host serves it as `application/json` at
+        /// `/.well-known/oauth-protected-resource` (and at the
+        /// path-prefixed variant when `path` is non-trivial). The
+        /// metadata endpoint includes `Access-Control-Allow-Origin: *`
+        /// because RFC 9728 expects discovery to be publicly readable
+        /// cross-origin.
         std::optional<nlohmann::json> resource_metadata;
 
         /// Public URL of the resource metadata document, embedded in
         /// the WWW-Authenticate challenge so the client can discover
-        /// the authorization server. If empty and `resource_metadata`
-        /// is set, the SDK will not advertise the metadata URL —
-        /// applications can hand it out via other means.
+        /// the authorization server. Same control-char restriction
+        /// as `auth_realm`.
         std::string resource_metadata_url;
     };
 

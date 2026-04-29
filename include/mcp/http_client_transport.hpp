@@ -127,6 +127,15 @@ public:
     /// established yet (the server may opt out).
     [[nodiscard]] std::optional<std::string> session_id() const;
 
+    /// Update the `Authorization: Bearer` token used on every
+    /// subsequent request — the obvious recovery path from an
+    /// `on_unauthorized` callback. Pass an empty string to drop the
+    /// header entirely. Thread-safe.
+    void set_access_token(std::string token);
+
+    /// Read the current access token. Thread-safe.
+    [[nodiscard]] std::string access_token() const;
+
 private:
     void worker_loop();
     void process_send(std::string frame);
@@ -171,6 +180,13 @@ private:
     mutable std::mutex            session_id_mu_;
     std::condition_variable       session_id_cv_;
     std::optional<std::string>    session_id_;
+
+    // Mutable access token. The constructor seeds this from
+    // Options::access_token; set_access_token() rotates it. Reads are
+    // taken on every outbound request, so this is hot-ish — but
+    // contention is bounded by the number of in-flight POSTs.
+    mutable std::mutex            auth_mu_;
+    std::string                   access_token_;
 
     MessageCallback               on_message_;
     ErrorCallback                 on_error_;
