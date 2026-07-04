@@ -678,12 +678,21 @@ void HttpServerHost::start() {
         }
 
         if (!ctx) {
-            // Either no session id and not an initialize, or session
-            // id refers to a session we don't know. Per spec, return
-            // 400 to push the client to start a new session.
-            res.status = 400;
-            res.set_content("unknown session id; send initialize first",
-                            "text/plain");
+            if (!sid.empty()) {
+                // Session id refers to a session we no longer know
+                // (expired, deleted, or bogus). Spec: the server
+                // MUST respond 404 so the client knows to start a
+                // fresh session with a new InitializeRequest.
+                res.status = 404;
+                res.set_content("unknown or expired session id",
+                                "text/plain");
+            } else {
+                // No session id and not an initialize — malformed
+                // usage rather than a stale session.
+                res.status = 400;
+                res.set_content("missing session id; send initialize first",
+                                "text/plain");
+            }
             return;
         }
 
@@ -864,15 +873,21 @@ void HttpServerHost::start() {
         }
     }
 
-    impl_->port = impl_->http.bind_to_any_port(opts_.host);
-    if (impl_->port < 0) {
-        started_.store(false, std::memory_order_release);
-        throw std::runtime_error("HttpServerHost: bind failed");
-    }
-    if (opts_.port != 0 && opts_.port != impl_->port) {
-        // bind_to_any_port ignores opts_.port; users who want a
-        // specific port should use bind_to_port + listen instead.
-        // For now, expose the actual bound port.
+    if (opts_.port != 0) {
+        if (!impl_->http.bind_to_port(opts_.host, opts_.port)) {
+            started_.store(false, std::memory_order_release);
+            throw std::runtime_error(
+                "HttpServerHost: bind failed for " + opts_.host + ":" +
+                std::to_string(opts_.port));
+        }
+        impl_->port = opts_.port;
+    } else {
+        impl_->port = impl_->http.bind_to_any_port(opts_.host);
+        if (impl_->port < 0) {
+            started_.store(false, std::memory_order_release);
+            throw std::runtime_error("HttpServerHost: bind failed for " +
+                                     opts_.host + " (OS-assigned port)");
+        }
     }
     impl_->listener = std::thread([this] { impl_->http.listen_after_bind(); });
     while (!impl_->http.is_running()) std::this_thread::sleep_for(std::chrono::milliseconds{1});

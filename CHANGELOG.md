@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Measured: in-process `tools/call` throughput **+~25%** (~24k → ~30k calls/sec)
   and p50 latency **−~21%** (~39 µs → ~31 µs) on an Apple Silicon dev machine.
 
+### Fixed (post-0.1.0)
+
+- `HttpServerHost` now honors `Options::port`. Previously `start()` always
+  called `bind_to_any_port`, silently binding an OS-assigned port and ignoring
+  a requested fixed port (surfaced by real-client interop testing — every
+  consumer asking for a specific port got a random one). A bind failure on the
+  requested port now throws instead of falling back.
+- POSTing to a terminated or unknown `Mcp-Session-Id` now returns **404**
+  as the spec requires (the client's cue to re-initialize), instead of 400.
+  A session-less non-initialize POST remains 400. GET already returned 404.
+
 ### Added (post-0.1.0)
 
 _Nothing yet._

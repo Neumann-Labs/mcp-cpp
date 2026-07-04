@@ -305,4 +305,95 @@ TEST(HttpEndToEnd, ClientSendsDeleteOnGracefulClose) {
     host.stop();
 }
 
+TEST(HttpEndToEnd, FixedPortIsHonored) {
+    // Regression: start() used to call bind_to_any_port
+    // unconditionally, silently ignoring Options::port. Grab an
+    // OS-assigned port with a throwaway host, then demand it back
+    // explicitly with a second one.
+    int chosen = 0;
+    {
+        mcp::HttpServerHost probe{
+            mcp::Implementation{.name = "probe", .version = "0"},
+            mcp::HttpServerHost::Options{.host = "127.0.0.1", .path = "/mcp"},
+            [](mcp::Server&) {},
+        };
+        probe.start();
+        chosen = probe.port();
+        probe.stop();
+    }
+    ASSERT_GT(chosen, 0);
+
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "fixed", .version = "0"},
+        mcp::HttpServerHost::Options{
+            .host = "127.0.0.1",
+            .port = chosen,
+            .path = "/mcp",
+        },
+        [](mcp::Server&) {},
+    };
+    host.start();
+    EXPECT_EQ(host.port(), chosen);
+
+    // And it actually answers there.
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(chosen)};
+    auto res = cli.Post("/mcp",
+        {{"Content-Type", "application/json"},
+         {"Accept",       "application/json, text/event-stream"}},
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+        R"({"protocolVersion":"2025-11-25","capabilities":{},)"
+        R"("clientInfo":{"name":"t","version":"0"}}})",
+        "application/json");
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 200);
+
+    host.stop();
+}
+
+TEST(HttpEndToEnd, PostToTerminatedSessionIs404) {
+    // Spec: a request carrying an Mcp-Session-Id the server no longer
+    // recognizes MUST get 404 (the client's cue to re-initialize).
+    // A session-less non-initialize POST stays a plain 400.
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        mcp::HttpServerHost::Options{.host = "127.0.0.1", .path = "/mcp"},
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    httplib::Headers base{
+        {"Content-Type", "application/json"},
+        {"Accept",       "application/json, text/event-stream"},
+    };
+
+    auto init = cli.Post("/mcp", base,
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+        R"({"protocolVersion":"2025-11-25","capabilities":{},)"
+        R"("clientInfo":{"name":"t","version":"0"}}})",
+        "application/json");
+    ASSERT_TRUE(init);
+    ASSERT_EQ(init->status, 200);
+    const std::string sid = init->get_header_value("Mcp-Session-Id");
+    ASSERT_FALSE(sid.empty());
+
+    auto del = cli.Delete("/mcp", {{"Mcp-Session-Id", sid}});
+    ASSERT_TRUE(del);
+    EXPECT_EQ(del->status, 204);
+
+    httplib::Headers stale = base;
+    stale.emplace("Mcp-Session-Id", sid);
+    auto reuse = cli.Post("/mcp", stale,
+        R"({"jsonrpc":"2.0","id":2,"method":"ping"})", "application/json");
+    ASSERT_TRUE(reuse);
+    EXPECT_EQ(reuse->status, 404);
+
+    auto no_sid = cli.Post("/mcp", base,
+        R"({"jsonrpc":"2.0","id":3,"method":"ping"})", "application/json");
+    ASSERT_TRUE(no_sid);
+    EXPECT_EQ(no_sid->status, 400);
+
+    host.stop();
+}
+
 }  // namespace
