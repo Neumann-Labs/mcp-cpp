@@ -4,8 +4,8 @@ CLAUDE.md
 # Environment variables
 .env
 
-# Build Directory
-build/
+# Build Directory (any build*/ variant: build/, build-rel/, build-asan/, …)
+build*/
 
 # Text file for debugging
 test_build_failures.txt
@@ -45,8 +45,9 @@ Testing/
 *.exe
 *.out
 *.app
-build/
-build-asan/
-build-tsan/
+build*/
 .cache/
 compile_commands.json
+
+# macOS Finder metadata
+.DS_Store
