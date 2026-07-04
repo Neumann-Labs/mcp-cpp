@@ -34,6 +34,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -42,6 +43,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace mcp {
 
@@ -115,6 +117,45 @@ public:
                  nlohmann::json             params  = nullptr,
                  std::chrono::milliseconds  timeout = std::chrono::milliseconds{0});
 
+    /// Send a JSON-RPC request and return a future for a *typed* result.
+    /// `convert` turns the raw result JSON into `T`; it runs on the
+    /// Session's read thread when the response arrives, so the caller's
+    /// future resolves directly — no per-call worker thread. Any exception
+    /// `convert` throws (e.g. a from_json type error) surfaces through the
+    /// returned future's `.get()`. `.wait_for()` / `.wait_until()` behave
+    /// normally (the future is backed by a real promise resolved in the
+    /// background).
+    template <class T>
+    [[nodiscard]] std::future<T>
+    send_request_for(std::string               method,
+                     nlohmann::json            params,
+                     std::function<T(nlohmann::json)> convert,
+                     std::chrono::milliseconds timeout = std::chrono::milliseconds{0}) {
+        auto pr  = std::make_shared<std::promise<T>>();
+        auto fut = pr->get_future();
+        Pending pending;
+        pending.resolve =
+            [pr, convert = std::move(convert)](nlohmann::json j) {
+                try {
+                    pr->set_value(convert(std::move(j)));
+                } catch (...) {
+                    pr->set_exception(std::current_exception());
+                }
+            };
+        pending.reject = [pr](std::exception_ptr e) { pr->set_exception(e); };
+        register_pending(std::move(method), std::move(params),
+                         std::move(pending), timeout);
+        return fut;
+    }
+
+    /// Like `send_request_for`, but for methods whose result carries no
+    /// payload the caller cares about (`ping`, `subscribe`, ...). The
+    /// future resolves to void on success and throws on error.
+    [[nodiscard]] std::future<void>
+    send_request_void(std::string               method,
+                      nlohmann::json            params  = nullptr,
+                      std::chrono::milliseconds timeout = std::chrono::milliseconds{0});
+
     /// Send a JSON-RPC notification (fire-and-forget).
     std::error_code send_notification(std::string    method,
                                       nlohmann::json params = nullptr);
@@ -135,10 +176,24 @@ private:
 
     [[nodiscard]] RequestId next_id() noexcept;
 
+    /// A parked outbound request. Instead of a bare promise we hold
+    /// type-erased resolvers so the typed `send_request_for<T>` can run
+    /// its json->T conversion at resolution time. Exactly one of
+    /// `resolve` / `reject` is invoked, always *outside* `pending_mu_`
+    /// (resolving a future can wake a waiter that re-enters the Session).
     struct Pending {
-        std::promise<nlohmann::json>           promise;
-        std::chrono::steady_clock::time_point  deadline;
+        std::function<void(nlohmann::json)>     resolve;
+        std::function<void(std::exception_ptr)> reject;
+        std::chrono::steady_clock::time_point   deadline;
     };
+
+    /// Allocate an id, park `pending`, and send the request frame. On a
+    /// closed session, duplicate id, or transport failure it invokes
+    /// `pending.reject` (after releasing the lock) instead.
+    void register_pending(std::string    method,
+                          nlohmann::json params,
+                          Pending        pending,
+                          std::chrono::milliseconds timeout);
 
     std::unique_ptr<Transport> transport_;
     Options                    opts_;

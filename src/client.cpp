@@ -148,12 +148,9 @@ Client::list_tools(std::optional<std::string> cursor) {
         throw Error{error_code::internal_error, "client not connected"};
     }
     ListToolsRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session->send_request(std::string{method_tools_list},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ListToolsResult {
-            return inner.get().get<ListToolsResult>();
-        });
+    return session->send_request_for<ListToolsResult>(
+        std::string{method_tools_list}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ListToolsResult>(); });
 }
 
 std::future<CallToolResult>
@@ -168,12 +165,9 @@ Client::call_tool(std::string name, nlohmann::json arguments) {
                                          : std::optional<nlohmann::json>(std::move(arguments)),
         .task      = std::nullopt,
     };
-    auto inner = session->send_request(std::string{method_tools_call},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> CallToolResult {
-            return inner.get().get<CallToolResult>();
-        });
+    return session->send_request_for<CallToolResult>(
+        std::string{method_tools_call}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<CallToolResult>(); });
 }
 
 std::future<CreateTaskResult>
@@ -190,12 +184,9 @@ Client::call_tool_as_task(std::string                 name,
                                          : std::optional<nlohmann::json>(std::move(arguments)),
         .task      = TaskAugmentation{.ttl = ttl_ms},
     };
-    auto inner = session->send_request(std::string{method_tools_call},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> CreateTaskResult {
-            return inner.get().get<CreateTaskResult>();
-        });
+    return session->send_request_for<CreateTaskResult>(
+        std::string{method_tools_call}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<CreateTaskResult>(); });
 }
 
 std::future<Task> Client::task_get(std::string task_id) {
@@ -203,12 +194,10 @@ std::future<Task> Client::task_get(std::string task_id) {
     if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
-    auto inner = session->send_request(std::string{method_tasks_get},
-        nlohmann::json(GetTaskRequestParams{.task_id = std::move(task_id)}));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> Task {
-            return inner.get().get<Task>();
-        });
+    return session->send_request_for<Task>(
+        std::string{method_tasks_get},
+        nlohmann::json(GetTaskRequestParams{.task_id = std::move(task_id)}),
+        [](nlohmann::json j) { return j.get<Task>(); });
 }
 
 std::future<nlohmann::json> Client::task_result(std::string task_id) {
@@ -216,12 +205,10 @@ std::future<nlohmann::json> Client::task_result(std::string task_id) {
     if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
-    auto inner = session->send_request(std::string{method_tasks_result},
+    // Already a future<json>; no conversion needed, so return the
+    // Session future directly (no per-call worker thread).
+    return session->send_request(std::string{method_tasks_result},
         nlohmann::json(GetTaskResultRequestParams{.task_id = std::move(task_id)}));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> nlohmann::json {
-            return inner.get();
-        });
 }
 
 std::future<ListTasksResult>
@@ -231,12 +218,9 @@ Client::task_list(std::optional<std::string> cursor) {
         throw Error{error_code::internal_error, "client not connected"};
     }
     ListTasksRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session->send_request(std::string{method_tasks_list},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ListTasksResult {
-            return inner.get().get<ListTasksResult>();
-        });
+    return session->send_request_for<ListTasksResult>(
+        std::string{method_tasks_list}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ListTasksResult>(); });
 }
 
 std::future<Task> Client::task_cancel(std::string task_id) {
@@ -244,12 +228,10 @@ std::future<Task> Client::task_cancel(std::string task_id) {
     if (!session) {
         throw Error{error_code::internal_error, "client not connected"};
     }
-    auto inner = session->send_request(std::string{method_tasks_cancel},
-        nlohmann::json(CancelTaskRequestParams{.task_id = std::move(task_id)}));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> Task {
-            return inner.get().get<Task>();
-        });
+    return session->send_request_for<Task>(
+        std::string{method_tasks_cancel},
+        nlohmann::json(CancelTaskRequestParams{.task_id = std::move(task_id)}),
+        [](nlohmann::json j) { return j.get<Task>(); });
 }
 
 void Client::set_task_status_handler(TaskStatusHandler handler) {
@@ -288,12 +270,9 @@ Client::list_resources(std::optional<std::string> cursor) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     ListResourcesRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session->send_request(std::string{method_resources_list},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ListResourcesResult {
-            return inner.get().get<ListResourcesResult>();
-        });
+    return session->send_request_for<ListResourcesResult>(
+        std::string{method_resources_list}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ListResourcesResult>(); });
 }
 
 std::future<ListResourceTemplatesResult>
@@ -301,12 +280,9 @@ Client::list_resource_templates(std::optional<std::string> cursor) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     ListResourceTemplatesRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session->send_request(std::string{method_resources_templates_list},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ListResourceTemplatesResult {
-            return inner.get().get<ListResourceTemplatesResult>();
-        });
+    return session->send_request_for<ListResourceTemplatesResult>(
+        std::string{method_resources_templates_list}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ListResourceTemplatesResult>(); });
 }
 
 std::future<ReadResourceResult>
@@ -314,12 +290,9 @@ Client::read_resource(std::string uri) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     ReadResourceRequestParams params{.uri = std::move(uri)};
-    auto inner = session->send_request(std::string{method_resources_read},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ReadResourceResult {
-            return inner.get().get<ReadResourceResult>();
-        });
+    return session->send_request_for<ReadResourceResult>(
+        std::string{method_resources_read}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ReadResourceResult>(); });
 }
 
 std::future<void>
@@ -327,10 +300,8 @@ Client::subscribe(std::string uri) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     SubscribeRequestParams params{.uri = std::move(uri)};
-    auto inner = session->send_request(std::string{method_resources_subscribe},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable { (void)inner.get(); });
+    return session->send_request_void(std::string{method_resources_subscribe},
+                                      nlohmann::json(params));
 }
 
 std::future<void>
@@ -338,10 +309,8 @@ Client::unsubscribe(std::string uri) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     UnsubscribeRequestParams params{.uri = std::move(uri)};
-    auto inner = session->send_request(std::string{method_resources_unsubscribe},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable { (void)inner.get(); });
+    return session->send_request_void(std::string{method_resources_unsubscribe},
+                                      nlohmann::json(params));
 }
 
 void Client::set_resource_updated_handler(ResourceUpdatedHandler handler) {
@@ -380,12 +349,9 @@ Client::list_prompts(std::optional<std::string> cursor) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     ListPromptsRequestParams params{.cursor = std::move(cursor)};
-    auto inner = session->send_request(std::string{method_prompts_list},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ListPromptsResult {
-            return inner.get().get<ListPromptsResult>();
-        });
+    return session->send_request_for<ListPromptsResult>(
+        std::string{method_prompts_list}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ListPromptsResult>(); });
 }
 
 std::future<GetPromptResult>
@@ -397,12 +363,9 @@ Client::get_prompt(std::string name,
         .name      = std::move(name),
         .arguments = std::move(arguments),
     };
-    auto inner = session->send_request(std::string{method_prompts_get},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> GetPromptResult {
-            return inner.get().get<GetPromptResult>();
-        });
+    return session->send_request_for<GetPromptResult>(
+        std::string{method_prompts_get}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<GetPromptResult>(); });
 }
 
 void Client::set_prompts_list_changed_handler(ListChangedHandler handler) {
@@ -439,21 +402,15 @@ std::error_code Client::cancel_request(RequestId request_id,
 std::future<void> Client::ping() {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
-    auto inner = session->send_request(std::string{method_ping}, nullptr);
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable {
-            (void)inner.get();
-        });
+    return session->send_request_void(std::string{method_ping}, nullptr);
 }
 
 std::future<void> Client::set_log_level(LoggingLevel level) {
     auto session = acquire_session();
     if (!session) throw Error{error_code::internal_error, "client not connected"};
     SetLevelRequestParams params{.level = level};
-    auto inner = session->send_request(std::string{method_logging_set_level},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable { (void)inner.get(); });
+    return session->send_request_void(std::string{method_logging_set_level},
+                                      nlohmann::json(params));
 }
 
 void Client::set_log_message_handler(LogMessageHandler handler) {
@@ -612,12 +569,9 @@ Client::complete(CompletionReference reference,
         .argument          = std::move(argument),
         .context_arguments = std::move(context_arguments),
     };
-    auto inner = session->send_request(std::string{method_completion_complete},
-                                        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> CompleteResult {
-            return inner.get().get<CompleteResult>();
-        });
+    return session->send_request_for<CompleteResult>(
+        std::string{method_completion_complete}, nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<CompleteResult>(); });
 }
 
 void Client::set_client_capabilities(ClientCapabilities caps) {

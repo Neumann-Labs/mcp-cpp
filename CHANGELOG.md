@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (post-0.1.0)
+
+- **HTTP transport split into its own `mcp::http` target.** The core `mcp`
+  library now depends only on `nlohmann_json`; the Streamable-HTTP transport
+  (`HttpServerHost` / `HttpClientTransport`) and its `cpp-httplib → OpenSSL`
+  dependency moved to a separate `mcp-http` / `mcp::http` target, still gated by
+  the `MCP_ENABLE_HTTP` option (default ON). A stdio-only server linked against
+  `mcp::mcp` now loads no OpenSSL/brotli/Security at all — smaller dependency
+  surface, no OpenSSL CVE exposure, and ~halved cold start.
+  - **Breaking (build only):** consumers of the HTTP transport must link
+    `mcp::http` instead of `mcp::mcp`. Stdio-only consumers are unaffected.
+- cpp-httplib's optional `brotli`/`zlib` auto-detection is now pinned **off**
+  (OpenSSL stays on), so HTTP builds are deterministic and no longer break when a
+  system `brotli` library is present without its headers.
+
+### Performance (post-0.1.0)
+
+- Request methods no longer spawn a `std::thread` per call. `Client::call_tool`
+  et al. (and `Server::sample`/`list_roots`/`elicit`) previously wrapped each
+  call in `std::async(std::launch::async)` solely to convert the result JSON to
+  a typed value. That now runs as a typed continuation on the session read
+  thread via the new `Session::send_request_for<T>()`, eliminating the per-call
+  thread while preserving `std::future` semantics (including `.wait_for()`).
+  Measured: in-process `tools/call` throughput **+~25%** (~24k → ~30k calls/sec)
+  and p50 latency **−~21%** (~39 µs → ~31 µs) on an Apple Silicon dev machine.
+
 ### Added (post-0.1.0)
 
 _Nothing yet._

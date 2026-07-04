@@ -235,7 +235,7 @@ ctest --test-dir build --output-on-failure
 | `MCP_BUILD_EXAMPLES`      | ON      | Build the example servers/clients.           |
 | `MCP_WARNINGS_AS_ERRORS`  | ON*     | Promote warnings to errors (top-level only). |
 | `MCP_USE_SYSTEM_DEPS`     | OFF     | `find_package` instead of `FetchContent`.    |
-| `MCP_ENABLE_HTTP`         | ON      | Build the Streamable HTTP transport (cpp-httplib). |
+| `MCP_ENABLE_HTTP`         | ON      | Build the `mcp::http` target (Streamable HTTP transport, cpp-httplib + OpenSSL). |
 | `MCP_ENABLE_ASAN`         | OFF     | `-fsanitize=address,undefined`.              |
 | `MCP_ENABLE_TSAN`         | OFF     | `-fsanitize=thread`.                         |
 | `MCP_ENABLE_COVERAGE`     | OFF     | `--coverage` for gcov/llvm-cov.              |
@@ -250,7 +250,16 @@ After `cmake --install build`, downstream projects can do:
 
 ```cmake
 find_package(mcp REQUIRED)
-target_link_libraries(my_app PRIVATE mcp::mcp)
+target_link_libraries(my_app PRIVATE mcp::mcp)   # stdio + core: no OpenSSL
+```
+
+The core `mcp::mcp` target depends only on `nlohmann_json` and carries no TLS
+dependency. To use the Streamable HTTP transport (`HttpServerHost` /
+`HttpClientTransport`), link the separate `mcp::http` target instead — it pulls
+in `mcp::mcp` plus cpp-httplib/OpenSSL:
+
+```cmake
+target_link_libraries(my_app PRIVATE mcp::http)  # HTTP transport (needs MCP_ENABLE_HTTP)
 ```
 
 ### `add_subdirectory` / FetchContent
@@ -262,7 +271,7 @@ FetchContent_Declare(mcp
     GIT_TAG        main)
 FetchContent_MakeAvailable(mcp)
 
-target_link_libraries(my_app PRIVATE mcp::mcp)
+target_link_libraries(my_app PRIVATE mcp::mcp)   # or mcp::http for HTTP
 ```
 
 ## Architecture in 60 seconds

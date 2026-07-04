@@ -1,7 +1,7 @@
 include(GoogleTest)
 
 add_executable(mcp_tests)
-target_link_libraries(mcp_tests PRIVATE mcp::mcp GTest::gtest_main GTest::gmock)
+target_link_libraries(mcp_tests PRIVATE GTest::gtest_main GTest::gmock)
 
 target_compile_options(mcp_tests PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
@@ -27,13 +27,20 @@ target_sources(mcp_tests PRIVATE
     audit_regression_test.cpp
 )
 
+# Link the core library, or — when HTTP is enabled — mcp::http, which brings
+# in mcp transitively (linking both directly would duplicate libmcp.a).
 if(MCP_ENABLE_HTTP)
     target_sources(mcp_tests PRIVATE
         http_client_transport_test.cpp
         http_e2e_test.cpp
         http_oauth_test.cpp
     )
-    target_link_libraries(mcp_tests PRIVATE httplib::httplib)
+    # mcp::http for the SDK's HTTP transport + the MCP_ENABLE_HTTP define;
+    # httplib::httplib for the include path, as these tests #include <httplib.h>
+    # directly to drive raw HTTP/SSE against the server host.
+    target_link_libraries(mcp_tests PRIVATE mcp::http httplib::httplib)
+else()
+    target_link_libraries(mcp_tests PRIVATE mcp::mcp)
 endif()
 
 # The calculator_server subprocess test only builds in if the example is
