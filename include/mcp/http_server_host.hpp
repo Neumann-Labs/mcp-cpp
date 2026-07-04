@@ -81,8 +81,16 @@ public:
         /// {"*"} (not recommended in production).
         std::vector<std::string> allowed_origins;
 
-        /// Idle session timeout. After this many seconds with no
-        /// inbound traffic, the session is torn down.
+        /// Idle session timeout. RESERVED — not currently enforced.
+        /// No reaper reads this: `last_seen` is stamped on each request
+        /// but never inspected, so an idle session lives until the
+        /// client sends `DELETE` or the host is `stop()`ed. The field is
+        /// kept for wire/API stability and for a future reaper. When
+        /// idle teardown is implemented, that reaper MUST invoke
+        /// `on_session_closed` for the reaped session before destroying
+        /// its `Server` (same contract as the DELETE/stop() paths),
+        /// otherwise embedders holding a raw `Server*` get a
+        /// use-after-free.
         std::chrono::seconds idle_timeout{600};
 
         // -------- 2025-11-25 OAuth 2.1 authorization (optional) --------

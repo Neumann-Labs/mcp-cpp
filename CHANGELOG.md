@@ -77,6 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON-RPC codec) plus footprint/startup measurements and the native-vs-
   interpreted rationale. See `bench/README.md`.
 
+### Documentation (post-0.1.0)
+
+- Corrected `HttpServerHost::Options::idle_timeout` doc comment. It claimed
+  idle sessions are "torn down" after the interval, but no reaper exists —
+  `last_seen` is stamped on each request and never read. Sessions end only on
+  client `DELETE` or host `stop()`. The comment now states this plainly and
+  records the requirement that a future idle reaper must fire
+  `on_session_closed` before destroying a reaped session's `Server`.
+
 ## [0.1.0] - 2026-04-29
 
 ### Added
