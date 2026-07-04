@@ -28,6 +28,7 @@ option(MCP_BUILD_EXAMPLES "Build the mcp-cpp examples"        ${MCP_IS_TOP_LEVEL
 option(MCP_WARNINGS_AS_ERRORS "Treat warnings as errors"      ${MCP_IS_TOP_LEVEL})
 option(MCP_USE_SYSTEM_DEPS "Use find_package for deps"        OFF)
 option(MCP_ENABLE_HTTP    "Build the Streamable HTTP transport (depends on cpp-httplib)" ON)
+option(MCP_HTTP_NO_TLS    "Build the HTTP transport without OpenSSL (plaintext only; for hosts that must not link a second OpenSSL, e.g. game engines)" OFF)
 option(MCP_ENABLE_ASAN    "Build with AddressSanitizer + UBSan" OFF)
 option(MCP_ENABLE_TSAN    "Build with ThreadSanitizer"           OFF)
 option(MCP_ENABLE_COVERAGE "Build with code-coverage flags"      OFF)
@@ -100,6 +101,14 @@ if(MCP_ENABLE_HTTP)
         # the include path. OpenSSL detection is left ON so HTTPS works.
         set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE INTERNAL "")
         set(HTTPLIB_USE_ZLIB_IF_AVAILABLE   OFF CACHE INTERNAL "")
+        # MCP_HTTP_NO_TLS drops the OpenSSL dependency entirely: https://
+        # URLs then fail at runtime, which plaintext-loopback deployments
+        # (and hosts that terminate TLS elsewhere) don't care about — and
+        # embedders like Unreal Engine must NOT link a second OpenSSL
+        # into a process that already ships its own.
+        if(MCP_HTTP_NO_TLS)
+            set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE INTERNAL "")
+        endif()
         FetchContent_MakeAvailable(httplib)
     endif()
 endif()

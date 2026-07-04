@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#error` guard); everything else — protocol, session, client/server, and the
   Streamable HTTP transport — builds and tests under MSVC. New `windows-latest`
   CI jobs (Debug + RelWithDebInfo) make this a supported configuration.
+- `MCP_HTTP_NO_TLS` CMake option — build the HTTP transport without OpenSSL
+  (plaintext only). For loopback deployments and for embedding in processes
+  that already ship their own TLS/OpenSSL (game engines, editors), where a
+  second OpenSSL copy risks symbol collisions. Full test suite passes in this
+  configuration; the resulting binaries link no crypto at all.
 
 ## [0.1.0] - 2026-04-29
 

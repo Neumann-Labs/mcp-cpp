@@ -236,6 +236,7 @@ ctest --test-dir build --output-on-failure
 | `MCP_WARNINGS_AS_ERRORS`  | ON*     | Promote warnings to errors (top-level only). |
 | `MCP_USE_SYSTEM_DEPS`     | OFF     | `find_package` instead of `FetchContent`.    |
 | `MCP_ENABLE_HTTP`         | ON      | Build the `mcp::http` target (Streamable HTTP transport, cpp-httplib + OpenSSL). |
+| `MCP_HTTP_NO_TLS`         | OFF     | Build `mcp::http` without OpenSSL (plaintext only) — for hosts that must not link a second OpenSSL (e.g. game engines). |
 | `MCP_ENABLE_ASAN`         | OFF     | `-fsanitize=address,undefined`.              |
 | `MCP_ENABLE_TSAN`         | OFF     | `-fsanitize=thread`.                         |
 | `MCP_ENABLE_COVERAGE`     | OFF     | `--coverage` for gcov/llvm-cov.              |
