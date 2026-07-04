@@ -15,19 +15,28 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
+#include <exception>
+#include <functional>
 #include <future>
+#include <ios>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace mcp {
 
