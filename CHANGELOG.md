@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that already ship their own TLS/OpenSSL (game engines, editors), where a
   second OpenSSL copy risks symbol collisions. Full test suite passes in this
   configuration; the resulting binaries link no crypto at all.
+- `examples/http_echo_server` — minimal Streamable-HTTP interop server (one
+  `echo` tool, optional `MCP_TOKEN` bearer auth) for exercising real MCP
+  clients against `HttpServerHost`; verified end-to-end against Claude Code.
 
 ## [0.1.0] - 2026-04-29
 
