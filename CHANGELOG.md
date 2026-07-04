@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/http_echo_server` — minimal Streamable-HTTP interop server (one
   `echo` tool, optional `MCP_TOKEN` bearer auth) for exercising real MCP
   clients against `HttpServerHost`; verified end-to-end against Claude Code.
+- `bench/` — in-process micro-benchmarks (`tools/call` / `ping` round-trip,
+  JSON-RPC codec) plus footprint/startup measurements and the native-vs-
+  interpreted rationale. See `bench/README.md`.
 
 ## [0.1.0] - 2026-04-29
 
