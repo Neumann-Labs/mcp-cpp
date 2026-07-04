@@ -14,6 +14,13 @@
 
 #pragma once
 
+#if defined(_WIN32)
+#error \
+    "mcp::StdioTransport is POSIX-only (poll(2) + file descriptors). " \
+    "On Windows, use the Streamable HTTP transport, or contribute a " \
+    "Win32 stdio transport (overlapped I/O on stdin/stdout handles)."
+#endif
+
 #include "mcp/transport.hpp"
 
 #include <atomic>

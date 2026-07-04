@@ -4,8 +4,13 @@ target_sources(mcp PRIVATE
     protocol.cpp
     server.cpp
     session.cpp
-    stdio_transport.cpp
 )
+
+# POSIX-only (poll(2) + fds). Windows consumers use the HTTP transport;
+# the header carries a matching #error guard.
+if(NOT WIN32)
+    target_sources(mcp PRIVATE stdio_transport.cpp)
+endif()
 
 # Optional HTTP transport, split into its own target so the TLS/compression
 # deps (httplib -> OpenSSL/brotli/zlib) are linked only into binaries that

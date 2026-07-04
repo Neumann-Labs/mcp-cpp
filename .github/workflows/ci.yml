@@ -54,6 +54,30 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure --timeout 120
 
+  windows:
+    # First-class MSVC coverage: core + HTTP transport + tests.
+    # StdioTransport is POSIX-only and is gated out of Windows builds
+    # (see src/CMakeLists.txt); everything else must compile clean.
+    name: windows-latest / msvc / ${{ matrix.config }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, RelWithDebInfo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        # Warnings-as-errors stays off until the MSVC warning surface has
+        # been triaged once — this is the SDK's first MSVC compiler ever.
+        run: cmake -B build -DMCP_BUILD_EXAMPLES=OFF -DMCP_WARNINGS_AS_ERRORS=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --timeout 120
+
   sanitizers:
     name: sanitizers / ${{ matrix.sanitizer }}
     runs-on: ubuntu-24.04

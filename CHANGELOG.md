@@ -46,7 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (post-0.1.0)
 
-_Nothing yet._
+- **Windows (MSVC) support for the core + HTTP transport.** The POSIX-only
+  `StdioTransport` is compiled out on `_WIN32` (its header carries a matching
+  `#error` guard); everything else — protocol, session, client/server, and the
+  Streamable HTTP transport — builds and tests under MSVC. New `windows-latest`
+  CI jobs (Debug + RelWithDebInfo) make this a supported configuration.
 
 ## [0.1.0] - 2026-04-29
 

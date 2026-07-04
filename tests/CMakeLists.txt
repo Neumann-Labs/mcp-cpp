@@ -13,7 +13,6 @@ target_sources(mcp_tests PRIVATE
     log_test.cpp
     error_test.cpp
     protocol_test.cpp
-    stdio_transport_test.cpp
     in_memory_transport.cpp
     session_test.cpp
     server_client_integration_test.cpp
@@ -26,6 +25,11 @@ target_sources(mcp_tests PRIVATE
     pagination_test.cpp
     audit_regression_test.cpp
 )
+
+# StdioTransport is POSIX-only; so is its test.
+if(NOT WIN32)
+    target_sources(mcp_tests PRIVATE stdio_transport_test.cpp)
+endif()
 
 # Link the core library, or — when HTTP is enabled — mcp::http, which brings
 # in mcp transitively (linking both directly would duplicate libmcp.a).
