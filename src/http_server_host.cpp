@@ -297,6 +297,24 @@ private:
 // Session-id minting
 // =====================================================================
 
+// Fire the user's on_session_closed hook for a session about to be torn
+// down, with the Server still fully alive. Exception-contained: the hook
+// is embedder code and must not abort a teardown or unwind through the
+// httplib worker / stop() caller.
+void invoke_session_closed(const HttpServerHost::Options& opts,
+                           Server&                        server) {
+    if (!opts.on_session_closed) return;
+    try {
+        opts.on_session_closed(server);
+    } catch (const std::exception& e) {
+        MCP_LOG_ERROR(std::string{"HttpServerHost: on_session_closed threw: "}
+                      + e.what());
+    } catch (...) {
+        MCP_LOG_ERROR("HttpServerHost: on_session_closed threw a non-std "
+                      "exception");
+    }
+}
+
 std::string make_session_id() {
     // 128-bit hex string from a per-call seeded RNG. Cryptographic
     // strength isn't promised here (std::random_device quality varies
@@ -812,6 +830,10 @@ void HttpServerHost::start() {
             }
         }
         if (ctx) {
+            // Notify the embedder while the Server is still fully alive
+            // (before close/join/destruction) so it can drop any raw
+            // Server* it holds. The sessions_mu is already released.
+            invoke_session_closed(host->opts_, *ctx->server);
             // Same TSan-race rationale as in stop(): close the
             // transport first, let its on_close cascade unblock the
             // server's run loop, then join.
@@ -918,6 +940,11 @@ void HttpServerHost::stop() {
         {
             std::lock_guard<std::mutex> lk(impl_->sessions_mu);
             drained.swap(impl_->sessions);
+        }
+        // Notify the embedder for every surviving session while its
+        // Server is still fully alive, before any close/join/destroy.
+        for (auto& [id, ctx] : drained) {
+            invoke_session_closed(opts_, *ctx->server);
         }
         for (auto& [id, ctx] : drained) {
             ctx->transport->close();

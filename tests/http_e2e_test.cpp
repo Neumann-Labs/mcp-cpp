@@ -23,11 +23,15 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -394,6 +398,112 @@ TEST(HttpEndToEnd, PostToTerminatedSessionIs404) {
     EXPECT_EQ(no_sid->status, 400);
 
     host.stop();
+}
+
+TEST(HttpEndToEnd, OnSessionClosedFiresOnceOnDelete) {
+    // The pre-destruction hook must fire exactly once per session on the
+    // client-DELETE teardown path, with the Server still alive. Track the
+    // Server* seen so we can assert identity, and count invocations.
+    std::mutex               seen_mu;
+    std::vector<mcp::Server*> seen;
+    std::atomic<int>          calls{0};
+
+    mcp::HttpServerHost::Options opts;
+    opts.host = "127.0.0.1";
+    opts.path = "/mcp";
+    opts.on_session_closed = [&](mcp::Server& s) {
+        // The Server is alive here: an any-thread call must succeed.
+        (void)s.client_capabilities();
+        {
+            std::lock_guard<std::mutex> lk(seen_mu);
+            seen.push_back(&s);
+        }
+        calls.fetch_add(1, std::memory_order_relaxed);
+    };
+
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        opts,
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    httplib::Headers base{
+        {"Content-Type", "application/json"},
+        {"Accept",       "application/json, text/event-stream"},
+    };
+    auto init = cli.Post("/mcp", base,
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+        R"({"protocolVersion":"2025-11-25","capabilities":{},)"
+        R"("clientInfo":{"name":"t","version":"0"}}})",
+        "application/json");
+    ASSERT_TRUE(init);
+    ASSERT_EQ(init->status, 200);
+    const std::string sid = init->get_header_value("Mcp-Session-Id");
+    ASSERT_FALSE(sid.empty());
+    EXPECT_EQ(calls.load(), 0);  // not yet — session is live
+
+    auto del = cli.Delete("/mcp", {{"Mcp-Session-Id", sid}});
+    ASSERT_TRUE(del);
+    EXPECT_EQ(del->status, 204);
+
+    // Fired exactly once, on the DELETE.
+    EXPECT_EQ(calls.load(), 1);
+    {
+        std::lock_guard<std::mutex> lk(seen_mu);
+        ASSERT_EQ(seen.size(), 1u);
+        EXPECT_NE(seen[0], nullptr);
+    }
+
+    // stop() must not re-fire for an already-torn-down session.
+    host.stop();
+    EXPECT_EQ(calls.load(), 1);
+}
+
+TEST(HttpEndToEnd, OnSessionClosedFiresOnStop) {
+    // stop() tears down every surviving session; the hook must fire once
+    // for each, before any close/join/destroy.
+    std::atomic<int> calls{0};
+
+    mcp::HttpServerHost::Options opts;
+    opts.host = "127.0.0.1";
+    opts.path = "/mcp";
+    opts.on_session_closed = [&](mcp::Server&) {
+        calls.fetch_add(1, std::memory_order_relaxed);
+    };
+
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        opts,
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    httplib::Headers base{
+        {"Content-Type", "application/json"},
+        {"Accept",       "application/json, text/event-stream"},
+    };
+    // Two independent sessions (each a fresh initialize mints its own id).
+    for (int i = 0; i < 2; ++i) {
+        auto init = cli.Post("/mcp", base,
+            R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+            R"({"protocolVersion":"2025-11-25","capabilities":{},)"
+            R"("clientInfo":{"name":"t","version":"0"}}})",
+            "application/json");
+        ASSERT_TRUE(init);
+        ASSERT_EQ(init->status, 200);
+    }
+    EXPECT_EQ(host.active_sessions(), 2u);
+    EXPECT_EQ(calls.load(), 0);
+
+    host.stop();
+    EXPECT_EQ(calls.load(), 2);
+
+    // Idempotent: a second stop() fires nothing more.
+    host.stop();
+    EXPECT_EQ(calls.load(), 2);
 }
 
 }  // namespace

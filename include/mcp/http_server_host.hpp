@@ -156,6 +156,41 @@ public:
         /// envelope. Default on; set to false if you want to bypass
         /// the SDK's CORS handling and bolt on your own.
         bool enable_cors_preflight = true;
+
+        /// Invoked exactly once per session, on each teardown path
+        /// (client `DELETE`, and `stop()` for every session still
+        /// alive), at a moment when the session's `Server` is still
+        /// fully constructed and safe to touch — BEFORE the transport
+        /// is closed, the run thread is joined, or the `Server` is
+        /// destroyed. The counterpart of the session factory: whatever
+        /// an embedder registered against a `Server&` in the factory,
+        /// it can unregister here while the pointer is still valid.
+        ///
+        /// Motivating case: an embedder that keeps a raw `Server*` in a
+        /// cross-thread registry (e.g. a logging fan-out that calls
+        /// `Server::log()` from an arbitrary thread) has no other
+        /// safe point to drop that pointer. `~Server` is too late —
+        /// member-destruction order means a concurrent `log()` can
+        /// touch already-destroyed Session state — so the SDK offers
+        /// this pre-destruction hook to close that window.
+        ///
+        /// Threading contract:
+        ///   - Called on the thread that drives the teardown: an httplib
+        ///     worker thread for the `DELETE` path, and the thread that
+        ///     called `stop()` for the shutdown path. Never the session's
+        ///     own run thread.
+        ///   - The host's `sessions` map lock is NOT held during the
+        ///     call, so the callback may call back into the host
+        ///     (`active_sessions()`, etc.) without deadlocking.
+        ///   - The `Server&` is alive for the duration of the call but
+        ///     MUST NOT be retained past it: destruction begins as soon
+        ///     as the callback returns. Do not spawn work that
+        ///     dereferences the `Server` later.
+        ///   - Keep it short and non-throwing; an exception that escapes
+        ///     is caught and logged, not propagated, but it will not
+        ///     stop the teardown.
+        using SessionClosedHook = std::function<void(Server& server)>;
+        SessionClosedHook on_session_closed;
     };
 
     HttpServerHost(Implementation server_info,
