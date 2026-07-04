@@ -46,6 +46,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (post-0.1.0)
 
+- `HttpServerHost::Options::on_session_closed` — a `std::function<void(Server&)>`
+  invoked exactly once per session on each teardown path (client `DELETE`, and
+  `stop()` for every surviving session) while the `Server` is still fully alive,
+  before the transport is closed or the `Server` is destroyed. Lets an embedder
+  that holds a raw `Server*` (e.g. a cross-thread logging fan-out) deregister it
+  while the pointer is still valid, closing a use-after-free window that `~Server`
+  member-destruction order would otherwise leave open. The header documents the
+  full threading contract; the callback carries the `Server&`, which also serves
+  session-lifetime consumers such as a capability-gated sampling provider.
+- `Server::client_capabilities()` — `std::optional<ClientCapabilities>` captured
+  at initialize and readable from any thread (`std::nullopt` before initialize).
+  Lets an embedder gate optional server-initiated flows (sampling, elicitation)
+  on what the connected client actually negotiated, instead of discovering the
+  gap through a round-trip failure.
 - **Windows (MSVC) support for the core + HTTP transport.** The POSIX-only
   `StdioTransport` is compiled out on `_WIN32` (its header carries a matching
   `#error` guard); everything else — protocol, session, client/server, and the

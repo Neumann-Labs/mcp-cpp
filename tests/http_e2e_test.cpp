@@ -506,4 +506,61 @@ TEST(HttpEndToEnd, OnSessionClosedFiresOnStop) {
     EXPECT_EQ(calls.load(), 2);
 }
 
+TEST(HttpEndToEnd, ClientCapabilitiesCapturedAtInitialize) {
+    // Before initialize: nullopt. After an initialize advertising known
+    // capabilities: the accessor returns them, readable from the factory
+    // thread via the session-closed hook (any-thread contract).
+    mcp::Server fresh{ mcp::Implementation{.name = "fresh", .version = "0"} };
+    EXPECT_FALSE(fresh.client_capabilities().has_value());
+
+    std::promise<mcp::ClientCapabilities> captured;
+    auto captured_fut = captured.get_future();
+
+    mcp::HttpServerHost::Options opts;
+    opts.host = "127.0.0.1";
+    opts.path = "/mcp";
+    opts.on_session_closed = [&](mcp::Server& s) {
+        auto caps = s.client_capabilities();
+        if (caps) {
+            try { captured.set_value(*caps); } catch (...) {}
+        }
+    };
+
+    mcp::HttpServerHost host{
+        mcp::Implementation{.name = "x", .version = "0"},
+        opts,
+        [](mcp::Server&) {},
+    };
+    host.start();
+
+    httplib::Client cli{"http://127.0.0.1:" + std::to_string(host.port())};
+    httplib::Headers base{
+        {"Content-Type", "application/json"},
+        {"Accept",       "application/json, text/event-stream"},
+    };
+    // A client advertising sampling + elicitation.
+    auto init = cli.Post("/mcp", base,
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+        R"({"protocolVersion":"2025-11-25",)"
+        R"("capabilities":{"sampling":{},"elicitation":{}},)"
+        R"("clientInfo":{"name":"t","version":"0"}}})",
+        "application/json");
+    ASSERT_TRUE(init);
+    ASSERT_EQ(init->status, 200);
+    const std::string sid = init->get_header_value("Mcp-Session-Id");
+    ASSERT_FALSE(sid.empty());
+
+    auto del = cli.Delete("/mcp", {{"Mcp-Session-Id", sid}});
+    ASSERT_TRUE(del);
+    ASSERT_EQ(del->status, 204);
+
+    ASSERT_EQ(captured_fut.wait_for(2s), std::future_status::ready);
+    const mcp::ClientCapabilities caps = captured_fut.get();
+    EXPECT_TRUE(caps.sampling.has_value());
+    EXPECT_TRUE(caps.elicitation.has_value());
+    EXPECT_FALSE(caps.roots.has_value());
+
+    host.stop();
+}
+
 }  // namespace

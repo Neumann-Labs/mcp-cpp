@@ -225,6 +225,19 @@ public:
     Server& enable_tasks(std::optional<std::int64_t> default_ttl_ms = std::nullopt,
                          std::size_t                 max_concurrent = 0);
 
+    /// The capabilities the connected client advertised in its
+    /// `initialize` request (roots, sampling, elicitation, tasks, …).
+    /// Empty (`std::nullopt`) until a client has completed initialize;
+    /// populated once, atomically, when initialize is handled.
+    ///
+    /// Readable from any thread. Lets an embedder gate optional
+    /// server-initiated flows on what the client can actually service —
+    /// e.g. only attempt `sample()` when `.sampling` is present, or
+    /// short-circuit an elicitation-driven tool with an actionable
+    /// message when `.elicitation` is absent — instead of discovering
+    /// the gap by a round-trip failure.
+    [[nodiscard]] std::optional<ClientCapabilities> client_capabilities() const;
+
     /// Run the server: bind a transport, install handlers, start the
     /// session, then block on a condition variable until `stop()` is
     /// called or the transport closes.
@@ -316,6 +329,13 @@ private:
     std::shared_ptr<Session>                    session_;
     mutable std::mutex                          session_mu_;
     std::atomic<bool>                           initialized_{false};
+
+    /// Client capabilities captured at initialize, readable any-thread.
+    /// Guarded by its own mutex (narrow surface, like the handler
+    /// registration mutexes above) rather than piggy-backing on
+    /// session_mu_.
+    std::optional<ClientCapabilities>           client_capabilities_;
+    mutable std::mutex                          client_capabilities_mu_;
     std::atomic<bool>                           stop_requested_{false};
     std::mutex                                  stop_mu_;
     std::condition_variable                     stop_cv_;

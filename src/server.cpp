@@ -711,6 +711,11 @@ std::shared_ptr<Session> Server::acquire_session() const {
     return session_;
 }
 
+std::optional<ClientCapabilities> Server::client_capabilities() const {
+    std::lock_guard<std::mutex> lk(client_capabilities_mu_);
+    return client_capabilities_;
+}
+
 Server& Server::enable_completion(CompletionHandler handler) {
     std::lock_guard<std::mutex> lk(completion_mu_);
     completion_handler_ = std::move(handler);
@@ -745,6 +750,15 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
     if (!initialized_.compare_exchange_strong(expected, true,
                                               std::memory_order_acq_rel)) {
         throw Error{error_code::invalid_request, "already initialized"};
+    }
+
+    // Record what the client negotiated so client_capabilities() can
+    // answer from any thread. Only the winning initialize reaches here
+    // (the CAS above serialises concurrent initializes), so this is a
+    // single, race-free store.
+    {
+        std::lock_guard<std::mutex> lk(client_capabilities_mu_);
+        client_capabilities_ = parsed.capabilities;
     }
 
     // Per spec: if we don't support the client's protocol version, we
