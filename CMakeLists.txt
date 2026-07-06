@@ -28,6 +28,7 @@ option(MCP_BUILD_EXAMPLES "Build the mcp-cpp examples"        ${MCP_IS_TOP_LEVEL
 option(MCP_WARNINGS_AS_ERRORS "Treat warnings as errors"      ${MCP_IS_TOP_LEVEL})
 option(MCP_USE_SYSTEM_DEPS "Use find_package for deps"        OFF)
 option(MCP_ENABLE_HTTP    "Build the Streamable HTTP transport (depends on cpp-httplib)" ON)
+option(MCP_HTTP_NO_TLS    "Build the HTTP transport without OpenSSL (plaintext only; for hosts that must not link a second OpenSSL, e.g. game engines)" OFF)
 option(MCP_ENABLE_ASAN    "Build with AddressSanitizer + UBSan" OFF)
 option(MCP_ENABLE_TSAN    "Build with ThreadSanitizer"           OFF)
 option(MCP_ENABLE_COVERAGE "Build with code-coverage flags"      OFF)
@@ -93,12 +94,50 @@ if(MCP_ENABLE_HTTP)
             GIT_TAG        v0.18.5
             GIT_SHALLOW    TRUE)
         set(HTTPLIB_INSTALL ON  CACHE INTERNAL "")
+        # Pin httplib's optional compression deps OFF so the build is
+        # deterministic regardless of what's installed on the host. Without
+        # this, httplib auto-detects a system brotli and then fails to
+        # compile on `#include <brotli/decode.h>` when the headers aren't on
+        # the include path. OpenSSL detection is left ON so HTTPS works.
+        set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE INTERNAL "")
+        set(HTTPLIB_USE_ZLIB_IF_AVAILABLE   OFF CACHE INTERNAL "")
+        # MCP_HTTP_NO_TLS drops the OpenSSL dependency entirely: https://
+        # URLs then fail at runtime, which plaintext-loopback deployments
+        # (and hosts that terminate TLS elsewhere) don't care about — and
+        # embedders like Unreal Engine must NOT link a second OpenSSL
+        # into a process that already ships its own.
+        if(MCP_HTTP_NO_TLS)
+            set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE INTERNAL "")
+        endif()
         FetchContent_MakeAvailable(httplib)
     endif()
 endif()
 
 # ----- Library -------------------------------------------------------------
 
+# Shared warning set, applied to every first-party target (mcp, mcp-http).
+function(mcp_target_warnings tgt)
+    target_compile_options(${tgt} PRIVATE
+        $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
+            -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+            -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused
+            -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion
+            -Wformat=2
+        >
+        $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
+    )
+    if(MCP_WARNINGS_AS_ERRORS)
+        target_compile_options(${tgt} PRIVATE
+            $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:-Werror>
+            $<$<CXX_COMPILER_ID:MSVC>:/WX>
+        )
+    endif()
+endfunction()
+
+# Core library: stdio transport + protocol/session/server/client. Depends only
+# on nlohmann_json — deliberately free of httplib/OpenSSL/brotli so stdio-only
+# servers stay lean and start in single-digit ms. The HTTP transport lives in a
+# separate `mcp::http` target (see src/CMakeLists.txt).
 add_library(mcp)
 add_library(mcp::mcp ALIAS mcp)
 
@@ -112,29 +151,10 @@ target_include_directories(mcp
 
 target_link_libraries(mcp PUBLIC nlohmann_json::nlohmann_json)
 
-if(MCP_ENABLE_HTTP)
-    target_link_libraries(mcp PRIVATE httplib::httplib)
-    target_compile_definitions(mcp PUBLIC MCP_ENABLE_HTTP=1)
-endif()
+mcp_target_warnings(mcp)
 
-target_compile_options(mcp PRIVATE
-    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-        -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
-        -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused
-        -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion
-        -Wformat=2
-    >
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
-)
-
-if(MCP_WARNINGS_AS_ERRORS)
-    target_compile_options(mcp PRIVATE
-        $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:-Werror>
-        $<$<CXX_COMPILER_ID:MSVC>:/WX>
-    )
-endif()
-
-# Sources are added by include via add_subdirectory of src/.
+# Sources are added by include via add_subdirectory of src/, which also defines
+# the optional mcp-http target.
 add_subdirectory(src)
 
 # ----- Tests / examples ----------------------------------------------------
@@ -155,7 +175,12 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS mcp
+set(_mcp_install_targets mcp)
+if(MCP_ENABLE_HTTP)
+    list(APPEND _mcp_install_targets mcp-http)
+endif()
+
+install(TARGETS ${_mcp_install_targets}
     EXPORT  mcp-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

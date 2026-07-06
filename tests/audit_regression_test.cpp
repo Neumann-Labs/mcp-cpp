@@ -10,13 +10,15 @@
 #include "mcp/error.hpp"
 #include "mcp/protocol.hpp"
 #include "mcp/server.hpp"
-#include "mcp/stdio_transport.hpp"
 
 #include <gtest/gtest.h>
 
 #include <nlohmann/json.hpp>
 
+#if !defined(_WIN32)
+#include "mcp/stdio_transport.hpp"
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -404,8 +406,10 @@ TEST(AuditRegression, ConcurrentInitializeRequestsExactlyOneSucceeds) {
 
 // -------------------------------------------------------------------------
 // Stdio CR stripping (audit spec #6) — exercised via in-memory pipe
+// (POSIX-only: StdioTransport + pipe(2))
 // -------------------------------------------------------------------------
 
+#if !defined(_WIN32)
 TEST(AuditRegression, StdioStripsCrBeforeNewline) {
     int t2[2];
     int f2[2];
@@ -433,6 +437,7 @@ TEST(AuditRegression, StdioStripsCrBeforeNewline) {
     transport->close();
     ::close(t2[1]); ::close(f2[0]);
 }
+#endif  // !defined(_WIN32)
 
 // -------------------------------------------------------------------------
 // Transport robustness: a frame whose JSON parses but whose JSON-RPC

@@ -7,9 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (post-0.1.0)
+
+- **HTTP transport split into its own `mcp::http` target.** The core `mcp`
+  library now depends only on `nlohmann_json`; the Streamable-HTTP transport
+  (`HttpServerHost` / `HttpClientTransport`) and its `cpp-httplib → OpenSSL`
+  dependency moved to a separate `mcp-http` / `mcp::http` target, still gated by
+  the `MCP_ENABLE_HTTP` option (default ON). A stdio-only server linked against
+  `mcp::mcp` now loads no OpenSSL/brotli/Security at all — smaller dependency
+  surface, no OpenSSL CVE exposure, and ~halved cold start.
+  - **Breaking (build only):** consumers of the HTTP transport must link
+    `mcp::http` instead of `mcp::mcp`. Stdio-only consumers are unaffected.
+- cpp-httplib's optional `brotli`/`zlib` auto-detection is now pinned **off**
+  (OpenSSL stays on), so HTTP builds are deterministic and no longer break when a
+  system `brotli` library is present without its headers.
+
+### Performance (post-0.1.0)
+
+- Request methods no longer spawn a `std::thread` per call. `Client::call_tool`
+  et al. (and `Server::sample`/`list_roots`/`elicit`) previously wrapped each
+  call in `std::async(std::launch::async)` solely to convert the result JSON to
+  a typed value. That now runs as a typed continuation on the session read
+  thread via the new `Session::send_request_for<T>()`, eliminating the per-call
+  thread while preserving `std::future` semantics (including `.wait_for()`).
+  Measured: in-process `tools/call` throughput **+~25%** (~24k → ~30k calls/sec)
+  and p50 latency **−~21%** (~39 µs → ~31 µs) on an Apple Silicon dev machine.
+
+### Fixed (post-0.1.0)
+
+- `HttpServerHost` now honors `Options::port`. Previously `start()` always
+  called `bind_to_any_port`, silently binding an OS-assigned port and ignoring
+  a requested fixed port (surfaced by real-client interop testing — every
+  consumer asking for a specific port got a random one). A bind failure on the
+  requested port now throws instead of falling back.
+- POSTing to a terminated or unknown `Mcp-Session-Id` now returns **404**
+  as the spec requires (the client's cue to re-initialize), instead of 400.
+  A session-less non-initialize POST remains 400. GET already returned 404.
+
 ### Added (post-0.1.0)
 
-_Nothing yet._
+- `HttpServerHost::Options::on_session_closed` — a `std::function<void(Server&)>`
+  invoked exactly once per session on each teardown path (client `DELETE`, and
+  `stop()` for every surviving session) while the `Server` is still fully alive,
+  before the transport is closed or the `Server` is destroyed. Lets an embedder
+  that holds a raw `Server*` (e.g. a cross-thread logging fan-out) deregister it
+  while the pointer is still valid, closing a use-after-free window that `~Server`
+  member-destruction order would otherwise leave open. The header documents the
+  full threading contract; the callback carries the `Server&`, which also serves
+  session-lifetime consumers such as a capability-gated sampling provider.
+- `Server::client_capabilities()` — `std::optional<ClientCapabilities>` captured
+  at initialize and readable from any thread (`std::nullopt` before initialize).
+  Lets an embedder gate optional server-initiated flows (sampling, elicitation)
+  on what the connected client actually negotiated, instead of discovering the
+  gap through a round-trip failure.
+- **Windows (MSVC) support for the core + HTTP transport.** The POSIX-only
+  `StdioTransport` is compiled out on `_WIN32` (its header carries a matching
+  `#error` guard); everything else — protocol, session, client/server, and the
+  Streamable HTTP transport — builds and tests under MSVC. New `windows-latest`
+  CI jobs (Debug + RelWithDebInfo) make this a supported configuration.
+- `MCP_HTTP_NO_TLS` CMake option — build the HTTP transport without OpenSSL
+  (plaintext only). For loopback deployments and for embedding in processes
+  that already ship their own TLS/OpenSSL (game engines, editors), where a
+  second OpenSSL copy risks symbol collisions. Full test suite passes in this
+  configuration; the resulting binaries link no crypto at all.
+- `examples/http_echo_server` — minimal Streamable-HTTP interop server (one
+  `echo` tool, optional `MCP_TOKEN` bearer auth) for exercising real MCP
+  clients against `HttpServerHost`; verified end-to-end against Claude Code.
+- `bench/` — in-process micro-benchmarks (`tools/call` / `ping` round-trip,
+  JSON-RPC codec) plus footprint/startup measurements and the native-vs-
+  interpreted rationale. See `bench/README.md`.
+
+### Documentation (post-0.1.0)
+
+- Corrected `HttpServerHost::Options::idle_timeout` doc comment. It claimed
+  idle sessions are "torn down" after the interval, but no reaper exists —
+  `last_seen` is stamped on each request and never read. Sessions end only on
+  client `DELETE` or host `stop()`. The comment now states this plainly and
+  records the requirement that a future idle reaper must fire
+  `on_session_closed` before destroying a reaped session's `Server`.
 
 ## [0.1.0] - 2026-04-29
 

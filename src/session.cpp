@@ -170,6 +170,29 @@ std::future<nlohmann::json>
 Session::send_request(std::string method,
                       nlohmann::json params,
                       std::chrono::milliseconds timeout) {
+    return send_request_for<nlohmann::json>(
+        std::move(method), std::move(params),
+        [](nlohmann::json j) { return j; }, timeout);
+}
+
+std::future<void>
+Session::send_request_void(std::string method,
+                           nlohmann::json params,
+                           std::chrono::milliseconds timeout) {
+    auto pr  = std::make_shared<std::promise<void>>();
+    auto fut = pr->get_future();
+    Pending pending;
+    pending.resolve = [pr](nlohmann::json) { pr->set_value(); };
+    pending.reject  = [pr](std::exception_ptr e) { pr->set_exception(e); };
+    register_pending(std::move(method), std::move(params),
+                     std::move(pending), timeout);
+    return fut;
+}
+
+void Session::register_pending(std::string    method,
+                               nlohmann::json params,
+                               Pending        pending,
+                               std::chrono::milliseconds timeout) {
     auto id = next_id();
 
     JsonRpcRequest req;
@@ -179,69 +202,68 @@ Session::send_request(std::string method,
 
     const auto effective_timeout =
         timeout == std::chrono::milliseconds{0} ? opts_.default_request_timeout : timeout;
-    const auto deadline = steady_clock::now() + effective_timeout;
+    pending.deadline = steady_clock::now() + effective_timeout;
 
-    Pending pending;
-    pending.deadline = deadline;
-    auto future = pending.promise.get_future();
+    // Keep a copy of the reject callback for the error paths below, which
+    // must fire *after* releasing pending_mu_ (resolving the caller's
+    // future can wake a waiter that re-enters the Session).
+    auto reject = pending.reject;
 
+    enum class Parked { kOk, kClosed, kDuplicate };
+    Parked state;
     {
         std::lock_guard<std::mutex> lk(pending_mu_);
         if (closed_.load(std::memory_order_acquire)) {
-            // Don't park a new entry on a closed session — its
-            // future would never resolve, since cancel_all_pending
-            // already drained the map. Surface the closed state
-            // directly through the future the caller is about to
-            // receive.
-            try {
-                throw Error{error_code::internal_error,
-                            "session closed"};
-            } catch (...) {
-                pending.promise.set_exception(std::current_exception());
-            }
-            return future;
-        }
-        auto [it, inserted] = pending_.try_emplace(id, std::move(pending));
-        if (!inserted) {
-            // The id space is monotonic per Session, so this is a
-            // sign of corruption (e.g. a Session object reused
-            // across logical connections). Fail fast rather than
-            // silently lose the caller's promise.
-            try {
-                throw Error{error_code::internal_error,
-                            "internal: duplicate request id " + id.canonical()};
-            } catch (...) {
-                std::promise<nlohmann::json> p;
-                auto fut = p.get_future();
-                p.set_exception(std::current_exception());
-                return fut;
+            // Don't park a new entry on a closed session — its future
+            // would never resolve, since cancel_all_pending already
+            // drained the map.
+            state = Parked::kClosed;
+        } else {
+            auto [it, inserted] = pending_.try_emplace(id, std::move(pending));
+            (void)it;
+            if (inserted) {
+                state = Parked::kOk;
+                timeout_cv_.notify_all();
+            } else {
+                // The id space is monotonic per Session, so this is a
+                // sign of corruption (e.g. a Session reused across
+                // logical connections). Fail fast.
+                state = Parked::kDuplicate;
             }
         }
-        timeout_cv_.notify_all();
+    }
+
+    if (state == Parked::kClosed) {
+        reject(std::make_exception_ptr(
+            Error{error_code::internal_error, "session closed"}));
+        return;
+    }
+    if (state == Parked::kDuplicate) {
+        reject(std::make_exception_ptr(
+            Error{error_code::internal_error,
+                  "internal: duplicate request id " + id.canonical()}));
+        return;
     }
 
     try {
         send_message(req);
     } catch (...) {
-        // If the transport refused, drop the pending entry and surface the
-        // error through the future so the caller observes it on .get().
-        std::promise<nlohmann::json> p;
+        // The transport refused. Pull the pending entry back out and
+        // surface the error through its future — unless a response or
+        // timeout raced us to it first.
+        Pending parked;
+        bool found = false;
         {
             std::lock_guard<std::mutex> lk(pending_mu_);
             auto it = pending_.find(id);
             if (it != pending_.end()) {
-                p = std::move(it->second.promise);
+                parked = std::move(it->second);
                 pending_.erase(it);
+                found = true;
             }
         }
-        try {
-            std::rethrow_exception(std::current_exception());
-        } catch (...) {
-            p.set_exception(std::current_exception());
-        }
+        if (found && parked.reject) parked.reject(std::current_exception());
     }
-
-    return future;
 }
 
 std::error_code
@@ -427,14 +449,13 @@ void Session::handle_response(JsonRpcResponse resp) {
         timeout_cv_.notify_all();
     }
 
+    // Resolve outside pending_mu_ (released above): the conversion +
+    // promise resolution can wake a waiter that re-enters the Session.
     if (resp.is_success()) {
-        pending.promise.set_value(std::move(resp).result());
+        if (pending.resolve) pending.resolve(std::move(resp).result());
     } else {
-        try {
-            throw Error{resp.error()};
-        } catch (...) {
-            pending.promise.set_exception(std::current_exception());
-        }
+        if (pending.reject)
+            pending.reject(std::make_exception_ptr(Error{resp.error()}));
     }
 }
 
@@ -456,31 +477,27 @@ void Session::timeout_loop() {
         }
         if (timeout_cv_.wait_until(lk, soonest) == std::cv_status::timeout) {
             const auto now = steady_clock::now();
-            // Snapshot the expired promises under the lock, drop them
+            // Snapshot the expired entries under the lock, drop them
             // out of the pending map, then release the lock before
-            // setting exceptions. Setting an exception on a promise
-            // can run user continuations, which we never want to do
-            // while holding our own mutex; and setting them on a
-            // local vector means we don't have to keep an iterator
-            // valid across cancel_all_pending swapping the map under
-            // us.
-            std::vector<std::promise<nlohmann::json>> expired;
+            // rejecting. Resolving a future can run user continuations,
+            // which we never want to do while holding our own mutex;
+            // snapshotting into a local vector also means we don't have
+            // to keep an iterator valid across cancel_all_pending
+            // swapping the map under us.
+            std::vector<std::function<void(std::exception_ptr)>> expired;
             for (auto it = pending_.begin(); it != pending_.end(); ) {
                 if (it->second.deadline <= now) {
-                    expired.push_back(std::move(it->second.promise));
+                    if (it->second.reject)
+                        expired.push_back(std::move(it->second.reject));
                     it = pending_.erase(it);
                 } else {
                     ++it;
                 }
             }
             lk.unlock();
-            for (auto& promise : expired) {
-                try {
-                    throw Error{error_code::internal_error,
-                                "request timed out"};
-                } catch (...) {
-                    promise.set_exception(std::current_exception());
-                }
+            for (auto& reject : expired) {
+                reject(std::make_exception_ptr(
+                    Error{error_code::internal_error, "request timed out"}));
             }
             lk.lock();
         }
@@ -495,11 +512,8 @@ void Session::cancel_all_pending(const ErrorObject& reason) {
         timeout_cv_.notify_all();
     }
     for (auto& [id, p] : drained) {
-        try {
-            throw Error{reason};
-        } catch (...) {
-            p.promise.set_exception(std::current_exception());
-        }
+        (void)id;
+        if (p.reject) p.reject(std::make_exception_ptr(Error{reason}));
     }
 }
 

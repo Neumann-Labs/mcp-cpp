@@ -650,13 +650,10 @@ Server::sample(CreateMessageRequestParams params) {
         throw Error{error_code::internal_error,
                     "Server::sample: server is not running"};
     }
-    auto inner = session->send_request(
+    return session->send_request_for<CreateMessageResult>(
         std::string{method_sampling_create_message},
-        nlohmann::json(params));
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> CreateMessageResult {
-            return inner.get().get<CreateMessageResult>();
-        });
+        nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<CreateMessageResult>(); });
 }
 
 std::future<ListRootsResult> Server::list_roots() {
@@ -665,11 +662,9 @@ std::future<ListRootsResult> Server::list_roots() {
         throw Error{error_code::internal_error,
                     "Server::list_roots: server is not running"};
     }
-    auto inner = session->send_request(std::string{method_roots_list}, nullptr);
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ListRootsResult {
-            return inner.get().get<ListRootsResult>();
-        });
+    return session->send_request_for<ListRootsResult>(
+        std::string{method_roots_list}, nullptr,
+        [](nlohmann::json j) { return j.get<ListRootsResult>(); });
 }
 
 std::future<ElicitResult>
@@ -687,14 +682,11 @@ Server::elicit(ElicitRequestParams       params,
     }
     // 0 ⇒ Session's default request timeout (30 s). For URL-mode
     // human-in-the-loop flows callers should pass a larger value.
-    auto inner = session->send_request(
+    return session->send_request_for<ElicitResult>(
         std::string{method_elicitation_create},
         nlohmann::json(params),
+        [](nlohmann::json j) { return j.get<ElicitResult>(); },
         timeout);
-    return std::async(std::launch::async,
-        [inner = std::move(inner)]() mutable -> ElicitResult {
-            return inner.get().get<ElicitResult>();
-        });
 }
 
 void Server::set_elicitation_complete_handler(
@@ -717,6 +709,11 @@ Server::notify_elicitation_complete(std::string elicitation_id) {
 std::shared_ptr<Session> Server::acquire_session() const {
     std::lock_guard<std::mutex> lk(session_mu_);
     return session_;
+}
+
+std::optional<ClientCapabilities> Server::client_capabilities() const {
+    std::lock_guard<std::mutex> lk(client_capabilities_mu_);
+    return client_capabilities_;
 }
 
 Server& Server::enable_completion(CompletionHandler handler) {
@@ -753,6 +750,15 @@ nlohmann::json Server::handle_initialize(const nlohmann::json& params) {
     if (!initialized_.compare_exchange_strong(expected, true,
                                               std::memory_order_acq_rel)) {
         throw Error{error_code::invalid_request, "already initialized"};
+    }
+
+    // Record what the client negotiated so client_capabilities() can
+    // answer from any thread. Only the winning initialize reaches here
+    // (the CAS above serialises concurrent initializes), so this is a
+    // single, race-free store.
+    {
+        std::lock_guard<std::mutex> lk(client_capabilities_mu_);
+        client_capabilities_ = parsed.capabilities;
     }
 
     // Per spec: if we don't support the client's protocol version, we

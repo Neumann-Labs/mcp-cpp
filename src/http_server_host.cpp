@@ -15,19 +15,28 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
+#include <exception>
+#include <functional>
 #include <future>
+#include <ios>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace mcp {
 
@@ -296,6 +305,24 @@ private:
 // =====================================================================
 // Session-id minting
 // =====================================================================
+
+// Fire the user's on_session_closed hook for a session about to be torn
+// down, with the Server still fully alive. Exception-contained: the hook
+// is embedder code and must not abort a teardown or unwind through the
+// httplib worker / stop() caller.
+void invoke_session_closed(const HttpServerHost::Options& opts,
+                           Server&                        server) {
+    if (!opts.on_session_closed) return;
+    try {
+        opts.on_session_closed(server);
+    } catch (const std::exception& e) {
+        MCP_LOG_ERROR(std::string{"HttpServerHost: on_session_closed threw: "}
+                      + e.what());
+    } catch (...) {
+        MCP_LOG_ERROR("HttpServerHost: on_session_closed threw a non-std "
+                      "exception");
+    }
+}
 
 std::string make_session_id() {
     // 128-bit hex string from a per-call seeded RNG. Cryptographic
@@ -678,12 +705,21 @@ void HttpServerHost::start() {
         }
 
         if (!ctx) {
-            // Either no session id and not an initialize, or session
-            // id refers to a session we don't know. Per spec, return
-            // 400 to push the client to start a new session.
-            res.status = 400;
-            res.set_content("unknown session id; send initialize first",
-                            "text/plain");
+            if (!sid.empty()) {
+                // Session id refers to a session we no longer know
+                // (expired, deleted, or bogus). Spec: the server
+                // MUST respond 404 so the client knows to start a
+                // fresh session with a new InitializeRequest.
+                res.status = 404;
+                res.set_content("unknown or expired session id",
+                                "text/plain");
+            } else {
+                // No session id and not an initialize — malformed
+                // usage rather than a stale session.
+                res.status = 400;
+                res.set_content("missing session id; send initialize first",
+                                "text/plain");
+            }
             return;
         }
 
@@ -803,6 +839,10 @@ void HttpServerHost::start() {
             }
         }
         if (ctx) {
+            // Notify the embedder while the Server is still fully alive
+            // (before close/join/destruction) so it can drop any raw
+            // Server* it holds. The sessions_mu is already released.
+            invoke_session_closed(host->opts_, *ctx->server);
             // Same TSan-race rationale as in stop(): close the
             // transport first, let its on_close cascade unblock the
             // server's run loop, then join.
@@ -864,15 +904,21 @@ void HttpServerHost::start() {
         }
     }
 
-    impl_->port = impl_->http.bind_to_any_port(opts_.host);
-    if (impl_->port < 0) {
-        started_.store(false, std::memory_order_release);
-        throw std::runtime_error("HttpServerHost: bind failed");
-    }
-    if (opts_.port != 0 && opts_.port != impl_->port) {
-        // bind_to_any_port ignores opts_.port; users who want a
-        // specific port should use bind_to_port + listen instead.
-        // For now, expose the actual bound port.
+    if (opts_.port != 0) {
+        if (!impl_->http.bind_to_port(opts_.host, opts_.port)) {
+            started_.store(false, std::memory_order_release);
+            throw std::runtime_error(
+                "HttpServerHost: bind failed for " + opts_.host + ":" +
+                std::to_string(opts_.port));
+        }
+        impl_->port = opts_.port;
+    } else {
+        impl_->port = impl_->http.bind_to_any_port(opts_.host);
+        if (impl_->port < 0) {
+            started_.store(false, std::memory_order_release);
+            throw std::runtime_error("HttpServerHost: bind failed for " +
+                                     opts_.host + " (OS-assigned port)");
+        }
     }
     impl_->listener = std::thread([this] { impl_->http.listen_after_bind(); });
     while (!impl_->http.is_running()) std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -903,6 +949,11 @@ void HttpServerHost::stop() {
         {
             std::lock_guard<std::mutex> lk(impl_->sessions_mu);
             drained.swap(impl_->sessions);
+        }
+        // Notify the embedder for every surviving session while its
+        // Server is still fully alive, before any close/join/destroy.
+        for (auto& [id, ctx] : drained) {
+            invoke_session_closed(opts_, *ctx->server);
         }
         for (auto& [id, ctx] : drained) {
             ctx->transport->close();

@@ -12,5 +12,7 @@
 #include "mcp/protocol.hpp"
 #include "mcp/server.hpp"
 #include "mcp/session.hpp"
-#include "mcp/stdio_transport.hpp"
+#if !defined(_WIN32)
+#include "mcp/stdio_transport.hpp"  // POSIX-only; see that header's guard
+#endif
 #include "mcp/transport.hpp"

@@ -54,6 +54,30 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure --timeout 120
 
+  windows:
+    # First-class MSVC coverage: core + HTTP transport + tests.
+    # StdioTransport is POSIX-only and is gated out of Windows builds
+    # (see src/CMakeLists.txt); everything else must compile clean.
+    name: windows-latest / msvc / ${{ matrix.config }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, RelWithDebInfo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        # Warnings-as-errors stays off until the MSVC warning surface has
+        # been triaged once — this is the SDK's first MSVC compiler ever.
+        run: cmake -B build -DMCP_BUILD_EXAMPLES=OFF -DMCP_WARNINGS_AS_ERRORS=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --timeout 120
+
   sanitizers:
     name: sanitizers / ${{ matrix.sanitizer }}
     runs-on: ubuntu-24.04
@@ -72,6 +96,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake clang
 
+      # TSan needs the entire std machinery instrumented. With the default
+      # libstdc++ (uninstrumented, precompiled) TSan cannot see the atomic
+      # refcount / happens-before edges inside libstdc++'s exception_ptr
+      # (std::__exception_ptr::exception_ptr::_M_release → free), and flags a
+      # false-positive data race on the plain ~promise teardown in
+      # Session::send_request_for<T>. That is exactly what flaked run
+      # 28716770512 (top frames all in uninstrumented libstdc++.so.6). Building
+      # against libc++ — whose std headers are inlined and therefore
+      # TSan-instrumented — closes that blind spot. macOS/libc++ TSan runs were
+      # clean 20+ times; no suppression file is used.
+      - name: Install libc++ (tsan)
+        if: matrix.sanitizer == 'tsan'
+        run: sudo apt-get install -y libc++-dev libc++abi-dev
+
       - name: Configure (asan)
         if: matrix.sanitizer == 'asan'
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMCP_ENABLE_ASAN=ON
@@ -79,6 +117,8 @@ jobs:
       - name: Configure (tsan)
         if: matrix.sanitizer == 'tsan'
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMCP_ENABLE_TSAN=ON
+          -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          -DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++
 
       - name: Build
         run: cmake --build build
